@@ -1,0 +1,122 @@
+digraph FreezingPhantomsPipeline {
+    // Graph attributes
+    graph [
+        rankdir=TB,
+        fontname="Helvetica",
+        fontsize=12,
+        bgcolor="white",
+        compound=true,
+        newrank=true
+    ];
+
+    // Node defaults
+    node [
+        fontname="Helvetica",
+        fontsize=11,
+        shape=box,
+        style="rounded,filled",
+        fillcolor="lightblue"
+    ];
+
+    // Edge defaults
+    edge [
+        fontname="Helvetica",
+        fontsize=10,
+        color="black"
+    ];
+
+    // Source
+    subgraph cluster_source {
+        label="Video Input";
+        style=filled;
+        fillcolor="lightgreen";
+
+        source [label="Video Source\n(/dev/video0 or file)\n640x640@30fps", fillcolor="palegreen"];
+    }
+
+    // Pose Estimation Pipeline
+    subgraph cluster_pose {
+        label="Pose Estimation Inference";
+        style=filled;
+        fillcolor="lightyellow";
+
+        pose_infer [label="INFERENCE_PIPELINE\nname: pose\nvdevice_group_id: 1\nbatch_size: 2\n\nPreprocess → HEF Model → Postprocess\n(yolov8pose_pose_estimation)", fillcolor="gold"];
+    }
+
+    // Tracker
+    tracker [
+        label="Object Tracker\n(hailo-tracker)\nClass ID: 0 (person)",
+        fillcolor="plum"
+    ];
+
+    // Instance Segmentation Pipeline
+    subgraph cluster_seg {
+        label="Instance Segmentation Inference";
+        style=filled;
+        fillcolor="lightcyan";
+
+        seg_infer [label="INFERENCE_PIPELINE\nname: segmentation\nvdevice_group_id: 1\nbatch_size: 2\n\nPreprocess → HEF Model → Postprocess\n(yolov8seg_instance_segmentation)", fillcolor="steelblue"];
+    }
+
+    // Data Extraction
+    subgraph cluster_callback {
+        label="Data Processing";
+        style=filled;
+        fillcolor="mistyrose";
+
+        extractor [label="Data Extractor\n• Extract player data\n• Keypoints (17 COCO)\n• Segmentation masks\n• Tracking IDs", fillcolor="lightcoral"];
+        queue [label="Thread-Safe Queue\n(maxsize=10)", fillcolor="lightpink"];
+
+        extractor -> queue;
+    }
+
+    // Sink
+    sink [label="Fake Sink\n(no display)", fillcolor="lightgray"];
+
+    // Game State
+    game [
+        label="Game State Manager\nConsumes player data",
+        fillcolor="lightseagreen",
+        shape=box3d
+    ];
+
+    // Main flow
+    source -> pose_infer [lhead=cluster_pose];
+    pose_infer -> tracker [ltail=cluster_pose];
+    tracker -> seg_infer [lhead=cluster_seg];
+    seg_infer -> extractor [ltail=cluster_seg, lhead=cluster_callback];
+    queue -> sink [ltail=cluster_callback];
+
+    // Data flow to game
+    queue -> game [label="get_latest_data()", style=dashed, color="green", ltail=cluster_callback];
+
+    // Annotations
+    note1 [
+        label="Direct INFERENCE_PIPELINE\nNo wrapper needed\nSimplified architecture",
+        shape=note,
+        fillcolor="lightyellow"
+    ];
+
+    note2 [
+        label="vdevice_group_id=1\nBoth models share\nHailo accelerator",
+        shape=note,
+        fillcolor="lightyellow"
+    ];
+
+    note3 [
+        label="Player Data:\n• Bounding boxes\n• 17 keypoints/person\n• Segmentation masks\n• Tracking IDs\n• Confidence scores",
+        shape=note,
+        fillcolor="lightblue"
+    ];
+
+    // Position notes
+    {rank=same; pose_infer; note1;}
+    {rank=same; seg_infer; note2;}
+    {rank=same; extractor; note3;}
+
+    // Additional details
+    label="\nFreezing Phantoms - Combined AI Pipeline\nPose Estimation + Instance Segmentation\nGStreamer-based Processing";
+    labelloc="t";
+    fontsize=16;
+}
+

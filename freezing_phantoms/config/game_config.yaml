@@ -1,0 +1,36 @@
+game:
+  countdown_duration: 3.0
+  green_light_duration: [5.0, 8.0]  # Random range in seconds
+  red_light_duration: [3.0, 5.0]    # Random range in seconds
+  penalty_duration: 2.0
+
+movement:
+  threshold_pixels: 20.0
+  monitored_keypoints:
+    - left_wrist
+    - right_wrist
+    - left_ankle
+    - right_ankle
+    - left_shoulder
+    - right_shoulder
+  # Smoothing and sensitivity controls
+  smoothing_alpha: 0.3  # 0-1, higher = more responsive, lower = more stable
+  pose_history_size: 5  # Number of poses to keep in history for smoothing
+  sensitivity_multiplier: 1.0  # >0, higher = more sensitive to movement
+  # Confidence filtering
+  keypoint_confidence_threshold: 0.5  # 0-1, minimum confidence score for keypoints to use
+
+camera:
+  resolution: [1280, 720]
+  fps: 30
+
+projector:
+  resolution: [1920, 1080]
+  display_index: 1  # Secondary display (0 = primary, 1 = secondary)
+
+calibration:
+  pattern_rows: 6
+  pattern_cols: 8
+  circle_radius: 40
+  circle_spacing: 150
+

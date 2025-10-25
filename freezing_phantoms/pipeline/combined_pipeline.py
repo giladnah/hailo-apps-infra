@@ -1,0 +1,442 @@
+"""
+Combined Hailo pipeline for pose estimation and instance segmentation.
+
+Runs both AI models on the same video stream to extract comprehensive player data.
+"""
+
+import os
+import queue
+import sys
+import threading
+from pathlib import Path
+
+import gi
+
+gi.require_version("Gst", "1.0")
+from gi.repository import Gst
+
+import setproctitle
+
+from hailo_apps.hailo_app_python.core.common.core import get_default_parser, get_resource_path
+from hailo_apps.hailo_app_python.core.common.defines import (
+    HAILO_ARCH_KEY,
+    INSTANCE_SEGMENTATION_MODEL_NAME_H8,
+    INSTANCE_SEGMENTATION_MODEL_NAME_H8L,
+    INSTANCE_SEGMENTATION_PIPELINE,
+    INSTANCE_SEGMENTATION_POSTPROCESS_FUNCTION,
+    INSTANCE_SEGMENTATION_POSTPROCESS_SO_FILENAME,
+    JSON_FILE_EXTENSION,
+    POSE_ESTIMATION_PIPELINE,
+    POSE_ESTIMATION_POSTPROCESS_FUNCTION,
+    POSE_ESTIMATION_POSTPROCESS_SO_FILENAME,
+    RESOURCES_JSON_DIR_NAME,
+    RESOURCES_MODELS_DIR_NAME,
+    RESOURCES_SO_DIR_NAME,
+)
+from hailo_apps.hailo_app_python.core.common.hailo_logger import get_logger
+from hailo_apps.hailo_app_python.core.common.installation_utils import detect_hailo_arch
+from hailo_apps.hailo_app_python.core.gstreamer.gstreamer_app import (
+    GStreamerApp,
+    app_callback_class,
+)
+from hailo_apps.hailo_app_python.core.gstreamer.gstreamer_helper_pipelines import (
+    INFERENCE_PIPELINE,
+    QUEUE,
+    SOURCE_PIPELINE,
+    TRACKER_PIPELINE,
+)
+from freezing_phantoms.pipeline.data_extractor import DataExtractor
+
+hailo_logger = get_logger(__name__)
+
+
+class GameCallbackClass(app_callback_class):
+    """
+    Callback class for game pipeline with thread-safe data queue.
+
+    Attributes:
+        data_queue (queue.Queue): Thread-safe queue for player data.
+        data_extractor (DataExtractor): Data extraction utility.
+    """
+
+    def __init__(self, frame_width: int, frame_height: int):
+        """
+        Initialize game callback class.
+
+        Args:
+            frame_width (int): Video frame width.
+            frame_height (int): Video frame height.
+        """
+        super().__init__()
+        self.data_queue = queue.Queue(maxsize=10)
+        self.data_extractor = DataExtractor(frame_width, frame_height)
+        self.frame_width = frame_width
+        self.frame_height = frame_height
+        hailo_logger.info(
+            f"GameCallbackClass initialized: {frame_width}x{frame_height}"
+        )
+
+    def get_latest_data(self, timeout: float = 0.1):
+        """
+        Get latest player data from queue.
+
+        Args:
+            timeout (float): Timeout for queue get operation.
+
+        Returns:
+            dict: Player data or None if queue is empty.
+        """
+        try:
+            return self.data_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+
+def game_pipeline_callback(pad, info, user_data: GameCallbackClass):  # noqa: ARG001
+    """
+    Callback function for combined pipeline.
+
+    Extracts player data and puts it in the thread-safe queue.
+
+    Args:
+        pad: GStreamer pad.
+        info: Probe info.
+        user_data (GameCallbackClass): User data object.
+
+    Returns:
+        Gst.PadProbeReturn: OK to continue pipeline.
+    """
+    hailo_logger.debug("🎯 CALLBACK CALLED! Processing frame...")
+
+    buffer = info.get_buffer()
+    if buffer is None:
+        hailo_logger.warning("Received None buffer")
+        return Gst.PadProbeReturn.OK
+
+    user_data.increment()
+    hailo_logger.debug(f"Frame count: {user_data.frame_count}")
+
+    # Extract player data
+    try:
+        player_data = user_data.data_extractor.extract_players(buffer)
+        hailo_logger.debug(f"Extracted {len(player_data.get('players', []))} players from callback")
+
+        # Put data in queue (non-blocking)
+        if not user_data.data_queue.full():
+            user_data.data_queue.put(player_data)
+            hailo_logger.debug(f"✅ Data added to queue (size: {user_data.data_queue.qsize()})")
+        else:
+            hailo_logger.debug("Data queue full, dropping frame data")
+
+    except Exception as e:
+        hailo_logger.error(f"Error extracting player data: {e}")
+
+    return Gst.PadProbeReturn.OK
+
+
+class CombinedPoseSegmentationPipeline(GStreamerApp):
+    """
+    Combined pipeline running pose estimation and instance segmentation.
+
+    This pipeline processes video frames through both models to extract:
+    - Person detection with tracking IDs
+    - Pose keypoints (17 COCO keypoints)
+    - Instance segmentation masks
+    """
+
+    def __init__(
+        self,
+        video_source: str = "/dev/video0",
+        frame_width: int = 640,
+        frame_height: int = 640,
+        frame_rate: int = 30,
+        debug_mode: bool = False,
+        hailo_options=None,
+    ):
+        """
+        Initialize combined pipeline.
+
+        Args:
+            video_source (str): Video source (device path or file).
+            frame_width (int): Frame width.
+            frame_height (int): Frame height.
+            frame_rate (int): Frame rate.
+            debug_mode (bool): If True, show video output with AI overlays.
+            hailo_options: Parsed Hailo standard options (arch, hef-path, etc.)
+        """
+        hailo_logger.info("Initializing CombinedPoseSegmentationPipeline")
+
+        # Store debug mode flag and options
+        self.debug_mode = debug_mode
+        self.custom_hailo_options = hailo_options
+
+        # Create user data
+        self.user_data = GameCallbackClass(frame_width, frame_height)
+
+        # Create custom parser with our defaults
+        parser = get_default_parser()
+
+        # Build sys.argv from options
+        argv_list = [
+            "combined_pipeline",
+            "--input", video_source,
+        ]
+
+        # Add custom options if provided
+        if self.custom_hailo_options:
+            if getattr(self.custom_hailo_options, 'arch', None):
+                argv_list.extend(["--arch", self.custom_hailo_options.arch])
+            if getattr(self.custom_hailo_options, 'hef_path', None):
+                argv_list.extend(["--hef-path", self.custom_hailo_options.hef_path])
+            if getattr(self.custom_hailo_options, 'disable_sync', False):
+                argv_list.append("--disable-sync")
+            if getattr(self.custom_hailo_options, 'show_fps', False):
+                argv_list.append("--show-fps")
+            if getattr(self.custom_hailo_options, 'dump_dot', False):
+                argv_list.append("--dump-dot")
+            if getattr(self.custom_hailo_options, 'disable_callback', False):
+                argv_list.append("--disable-callback")
+        else:
+            # Default options when no custom options provided
+            argv_list.append("--disable-sync")
+            argv_list.append("--show-fps")
+
+        # Temporarily override sys.argv for parser
+        old_argv = sys.argv
+        sys.argv = argv_list
+
+        try:
+            # Initialize base class (it will call parser.parse_args())
+            super().__init__(parser, self.user_data)
+        finally:
+            # Restore original sys.argv
+            sys.argv = old_argv
+
+        # Set the callback function for the parent class
+        self.app_callback = game_pipeline_callback
+
+        # Video parameters
+        self.frame_width = frame_width
+        self.frame_height = frame_height
+        self.frame_rate = frame_rate
+        self.batch_size = 2
+
+        # Detect architecture
+        if self.options_menu.arch is None:
+            arch = os.getenv(HAILO_ARCH_KEY, detect_hailo_arch())
+            if not arch:
+                hailo_logger.error("Could not detect Hailo architecture")
+                raise ValueError("Could not auto-detect Hailo architecture")
+            self.arch = arch
+        else:
+            self.arch = self.options_menu.arch
+
+        hailo_logger.info(f"Using Hailo architecture: {self.arch}")
+
+        # Setup pose estimation resources
+        # Use custom HEF path if provided, otherwise use default
+        if self.custom_hailo_options and getattr(self.custom_hailo_options, 'hef_path', None):
+            # If custom HEF is provided, it's assumed to be for pose estimation
+            # (game requires both pose and segmentation)
+            hailo_logger.warning("Custom HEF path provided but game requires both pose and segmentation models")
+            self.pose_hef_path = self.custom_hailo_options.hef_path
+        else:
+            self.pose_hef_path = str(
+                get_resource_path(POSE_ESTIMATION_PIPELINE, RESOURCES_MODELS_DIR_NAME)
+            )
+
+        self.pose_post_so = str(
+            get_resource_path(
+                POSE_ESTIMATION_PIPELINE,
+                RESOURCES_SO_DIR_NAME,
+                POSE_ESTIMATION_POSTPROCESS_SO_FILENAME,
+            )
+        )
+        self.pose_post_function = POSE_ESTIMATION_POSTPROCESS_FUNCTION
+
+        # Setup segmentation resources
+        self.seg_hef_path = str(
+            get_resource_path(INSTANCE_SEGMENTATION_PIPELINE, RESOURCES_MODELS_DIR_NAME)
+        )
+        self.seg_post_so = str(
+            get_resource_path(
+                INSTANCE_SEGMENTATION_PIPELINE,
+                RESOURCES_SO_DIR_NAME,
+                INSTANCE_SEGMENTATION_POSTPROCESS_SO_FILENAME,
+            )
+        )
+        self.seg_post_function = INSTANCE_SEGMENTATION_POSTPROCESS_FUNCTION
+
+        # Determine segmentation config file
+        hef_name = Path(self.seg_hef_path).name
+        if INSTANCE_SEGMENTATION_MODEL_NAME_H8 in hef_name:
+            self.seg_config_file = str(
+                get_resource_path(
+                    INSTANCE_SEGMENTATION_PIPELINE,
+                    RESOURCES_JSON_DIR_NAME,
+                    INSTANCE_SEGMENTATION_MODEL_NAME_H8 + JSON_FILE_EXTENSION,
+                )
+            )
+        elif INSTANCE_SEGMENTATION_MODEL_NAME_H8L in hef_name:
+            self.seg_config_file = str(
+                get_resource_path(
+                    INSTANCE_SEGMENTATION_PIPELINE,
+                    RESOURCES_JSON_DIR_NAME,
+                    INSTANCE_SEGMENTATION_MODEL_NAME_H8L + JSON_FILE_EXTENSION,
+                )
+            )
+        else:
+            hailo_logger.warning(f"Unknown segmentation HEF: {hef_name}, using default config")
+            self.seg_config_file = None
+
+        hailo_logger.info(f"Pose HEF: {self.pose_hef_path}")
+        hailo_logger.info(f"Segmentation HEF: {self.seg_hef_path}")
+
+        # Set process title
+        setproctitle.setproctitle("Freezing Phantoms - AI Pipeline")
+
+        # Callback
+        self.app_callback = game_pipeline_callback
+
+        # Create pipeline (custom implementation without display)
+        self._create_game_pipeline()
+        hailo_logger.info("Combined pipeline created successfully")
+
+        # Pipeline thread
+        self._pipeline_thread = None
+        self._running = False
+
+    def _create_game_pipeline(self):
+        """
+        Create pipeline with optional display element.
+
+        In debug mode, connects FPS callback to hailo_display.
+        In game mode, uses fakesink without display.
+        """
+        from gi.repository import GLib
+
+        hailo_logger.debug("Creating game pipeline...")
+        Gst.init(None)
+        pipeline_string = self.get_pipeline_string()
+        hailo_logger.debug(f"Pipeline string: {pipeline_string}")
+
+        try:
+            self.pipeline = Gst.parse_launch(pipeline_string)
+        except Exception as e:
+            hailo_logger.error(f"Error creating pipeline: {e}")
+            print(f"Error creating pipeline: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        # Note: FPS callback not connected in debug mode
+        # The hailooverlay element doesn't support fps-measurements signal
+        # Video output with AI overlays will still work for debugging
+        if self.debug_mode:
+            hailo_logger.info("Debug mode: Video display enabled (FPS counter not available)")
+
+        self.loop = GLib.MainLoop()
+        hailo_logger.debug("Pipeline created successfully")
+
+    def get_pipeline_string(self) -> str:
+        """
+        Build the combined pipeline string.
+
+        Returns:
+            str: GStreamer pipeline string.
+        """
+        hailo_logger.debug("Building combined pipeline string")
+
+        # Source pipeline
+        source = SOURCE_PIPELINE(
+            video_source=self.video_source,
+            video_width=self.frame_width,
+            video_height=self.frame_height,
+            frame_rate=self.frame_rate,
+            sync=self.sync,
+        )
+
+        # Pose estimation inference
+        pose_infer = INFERENCE_PIPELINE(
+            hef_path=self.pose_hef_path,
+            post_process_so=self.pose_post_so,
+            post_function_name=self.pose_post_function,
+            batch_size=self.batch_size,
+            name="pose",
+            vdevice_group_id=1,
+        )
+
+        # Tracker (after pose detection)
+        tracker = TRACKER_PIPELINE(class_id=0)
+
+        # Segmentation inference
+        seg_infer = INFERENCE_PIPELINE(
+            hef_path=self.seg_hef_path,
+            post_process_so=self.seg_post_so,
+            post_function_name=self.seg_post_function,
+            batch_size=self.batch_size,
+            config_json=self.seg_config_file,
+            name="segmentation",
+            vdevice_group_id=1,
+        )
+
+        # User callback (probe point) - identity element for callback attachment
+        callback_queue = QUEUE(name="callback_q")
+        identity_callback = "identity name=identity_callback"
+
+        # Sink: display for debug mode, fakesink for game mode
+        if self.debug_mode:
+            sink = "hailooverlay name=hailo_overlay ! videoconvert ! xvimagesink name=hailo_display sync=false"
+            hailo_logger.info("Debug mode: Using video display")
+        else:
+            sink = "fakesink name=game_sink sync=false"
+            hailo_logger.info("Game mode: Using fakesink (no display)")
+
+        # Combine all elements
+        pipeline_string = (
+            f"{source} ! "
+            f"{pose_infer} ! "
+            f"{tracker} ! "
+            f"{seg_infer} ! "
+            f"{callback_queue} ! "
+            f"{identity_callback} ! "
+            f"{sink}"
+        )
+
+        hailo_logger.debug(f"Pipeline: {pipeline_string}")
+        return pipeline_string
+
+    def start(self) -> None:
+        """Start the pipeline in a separate thread."""
+        if self._running:
+            hailo_logger.warning("Pipeline already running")
+            return
+
+        self._running = True
+        self._pipeline_thread = threading.Thread(target=self.run, daemon=True)
+        self._pipeline_thread.start()
+        hailo_logger.info("Pipeline started in background thread")
+
+    def stop(self) -> None:
+        """Stop the pipeline."""
+        if not self._running:
+            return
+
+        self._running = False
+        self.shutdown()
+
+        if self._pipeline_thread:
+            self._pipeline_thread.join(timeout=5.0)
+
+        hailo_logger.info("Pipeline stopped")
+
+    def get_latest_data(self, timeout: float = 0.1):
+        """
+        Get latest player data from pipeline.
+
+        Args:
+            timeout (float): Timeout for getting data.
+
+        Returns:
+            dict: Player data or None.
+        """
+        return self.user_data.get_latest_data(timeout)
+

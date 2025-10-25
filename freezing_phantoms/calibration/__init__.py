@@ -1,0 +1,2 @@
+"""Camera-projector calibration module."""
+
