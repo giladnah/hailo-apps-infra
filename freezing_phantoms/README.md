@@ -17,6 +17,7 @@ An AI-augmented Halloween game using Hailo AI for real-time player tracking and 
   - Red Light: Scanning lasers and ice encasement effects
   - Penalty: Spotlight on caught players
 - **Audio Cues**: Spooky sound effects and background music
+- **Debug Mode**: Visual debugging with AI overlays (`--show-video`)
 
 ## Hardware Requirements
 
@@ -35,6 +36,24 @@ An AI-augmented Halloween game using Hailo AI for real-time player tracking and 
 - Pygame
 - PyYAML
 - NumPy
+
+## Quick Start
+
+### 1. Setup
+```bash
+cd freezing_phantoms
+./setup.sh
+```
+
+### 2. Run Calibration
+```bash
+python calibrate.py --video-source /dev/video0
+```
+
+### 3. Start the Game
+```bash
+python main.py --video-source /dev/video0
+```
 
 ## Installation
 
@@ -56,8 +75,6 @@ An AI-augmented Halloween game using Hailo AI for real-time player tracking and 
      - `freeze_sound.wav`: "Freeze!" command sound
      - `caught_buzzer.wav`: Penalty sound effect
      - `game_start.wav`: Countdown sound
-
-   See `assets/audio/README.md` for sources and format recommendations.
 
 ## Setup and Calibration
 
@@ -115,8 +132,6 @@ The validation shows:
 - Alignment across play area
 - Any offset or distortion issues
 
-For detailed calibration help, see [CALIBRATION_GUIDE.md](CALIBRATION_GUIDE.md).
-
 ## Running the Game
 
 Once calibration is complete, start the game:
@@ -124,6 +139,8 @@ Once calibration is complete, start the game:
 ```bash
 python main.py --video-source /dev/video0
 ```
+
+### Command Line Options
 
 **Game-Specific Options:**
 - `--config`: Path to configuration file (default: `config/game_config.yaml`)
@@ -159,7 +176,7 @@ python main.py --input /dev/video2 --frame-rate 60
 python main.py --input /dev/video0 --show-video --dump-dot
 ```
 
-**Debug Mode:**
+### Debug Mode
 
 To see what the AI pipeline is detecting, use the `--show-video` flag:
 ```bash
@@ -284,6 +301,9 @@ Camera → Hailo Pipeline → Game State Machine → Projection Renderer → Pro
 **Problem**: Calibration seems inaccurate
 - **Solution**: Re-run calibration with better alignment, ensure camera and projector are stable
 
+**Problem**: Keyboard input not working during calibration
+- **Solution**: Click on the camera feed window before pressing keys, try 'c' instead of SPACE, check terminal for "Key detected" messages
+
 ### Pipeline Issues
 
 **Problem**: "Could not detect Hailo architecture"
@@ -299,6 +319,25 @@ Camera → Hailo Pipeline → Game State Machine → Projection Renderer → Pro
 
 **Problem**: Projector on wrong display
 - **Solution**: Adjust `display_index` in config, or manually move the window
+
+### Debug Logging
+
+Enable debug logging to see detailed information from all components:
+
+```bash
+# Method 1: Command line
+python main.py --input /dev/video0 --log-level DEBUG
+
+# Method 2: Environment variable
+LOG_LEVEL=DEBUG python main.py --input /dev/video0
+```
+
+Debug logging shows:
+- Movement detector operations
+- Game state transitions
+- Pipeline initialization
+- Data extraction details
+- Projection rendering
 
 ## Development and Testing
 
@@ -323,6 +362,52 @@ Edit `config/game_config.yaml`:
 - Increase `threshold_pixels` to make detection less sensitive
 - Add/remove keypoints from `monitored_keypoints`
 
+## Project Structure
+
+```
+freezing_phantoms/
+├── main.py                    # Main application entry point
+├── calibrate.py              # Standalone calibration tool
+├── setup.sh                  # Setup script
+├── requirements.txt          # Python dependencies
+├── config/
+│   ├── game_config.yaml      # Game configuration
+│   └── calibration.npy       # Calibration matrix (generated)
+├── core/                     # Core game logic
+│   ├── audio_manager.py      # Audio playback
+│   ├── game_state.py         # Game state machine
+│   ├── movement_detector.py  # Movement detection
+│   └── projection_renderer.py # Visual effects rendering
+├── pipeline/                 # AI inference
+│   ├── combined_pipeline.py  # Dual-model pipeline
+│   └── data_extractor.py     # Data parsing
+├── calibration/              # Calibration system
+│   ├── calibration_tool.py   # Calibration logic
+│   └── pattern_generator.py  # Pattern generation
+├── effects/                  # Visual effects
+│   ├── green_light_effects.py
+│   └── red_light_effects.py
+├── assets/                   # Game assets
+│   └── audio/               # Audio files
+└── tests/                   # Unit tests
+    ├── test_calibration.py
+    ├── test_movement_detection.py
+    └── test_game_state.py
+```
+
+## Performance Characteristics
+
+### Latency
+- AI inference: ~33ms (30 FPS)
+- Movement detection: <1ms
+- Rendering: ~16ms (60 FPS capable)
+- Total loop time: ~50ms
+
+### Resource Usage
+- Memory: ~500MB (with Hailo pipeline)
+- CPU: Moderate (mostly GStreamer)
+- GPU/Hailo: High during inference
+
 ## Future Enhancements
 
 See [docs/TODO_LEADERBOARD.md](docs/TODO_LEADERBOARD.md) for planned leaderboard system with:
@@ -346,4 +431,3 @@ See LICENSE file in repository root.
 ## Contact
 
 For issues or questions, please open an issue on the repository.
-

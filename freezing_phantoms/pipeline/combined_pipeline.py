@@ -73,7 +73,7 @@ class GameCallbackClass(app_callback_class):
         self.frame_width = frame_width
         self.frame_height = frame_height
         hailo_logger.info(
-            f"GameCallbackClass initialized: {frame_width}x{frame_height}"
+            "GameCallbackClass initialized: %dx%d", frame_width, frame_height
         )
 
     def get_latest_data(self, timeout: float = 0.1):
@@ -114,22 +114,22 @@ def game_pipeline_callback(pad, info, user_data: GameCallbackClass):  # noqa: AR
         return Gst.PadProbeReturn.OK
 
     user_data.increment()
-    hailo_logger.debug(f"Frame count: {user_data.frame_count}")
+    hailo_logger.debug("Frame count: %d", user_data.frame_count)
 
     # Extract player data
     try:
         player_data = user_data.data_extractor.extract_players(buffer)
-        hailo_logger.debug(f"Extracted {len(player_data.get('players', []))} players from callback")
+        hailo_logger.debug("Extracted %d players from callback", len(player_data.get('players', [])))
 
         # Put data in queue (non-blocking)
         if not user_data.data_queue.full():
             user_data.data_queue.put(player_data)
-            hailo_logger.debug(f"✅ Data added to queue (size: {user_data.data_queue.qsize()})")
+            hailo_logger.debug("✅ Data added to queue (size: %d)", user_data.data_queue.qsize())
         else:
             hailo_logger.debug("Data queue full, dropping frame data")
 
     except Exception as e:
-        hailo_logger.error(f"Error extracting player data: {e}")
+        hailo_logger.error("Error extracting player data: %s", e)
 
     return Gst.PadProbeReturn.OK
 
@@ -231,7 +231,7 @@ class CombinedPoseSegmentationPipeline(GStreamerApp):
         else:
             self.arch = self.options_menu.arch
 
-        hailo_logger.info(f"Using Hailo architecture: {self.arch}")
+        hailo_logger.info("Using Hailo architecture: %s", self.arch)
 
         # Setup pose estimation resources
         # Use custom HEF path if provided, otherwise use default
@@ -286,11 +286,11 @@ class CombinedPoseSegmentationPipeline(GStreamerApp):
                 )
             )
         else:
-            hailo_logger.warning(f"Unknown segmentation HEF: {hef_name}, using default config")
+            hailo_logger.warning("Unknown segmentation HEF: %s, using default config", hef_name)
             self.seg_config_file = None
 
-        hailo_logger.info(f"Pose HEF: {self.pose_hef_path}")
-        hailo_logger.info(f"Segmentation HEF: {self.seg_hef_path}")
+        hailo_logger.info("Pose HEF: %s", self.pose_hef_path)
+        hailo_logger.info("Segmentation HEF: %s", self.seg_hef_path)
 
         # Set process title
         setproctitle.setproctitle("Freezing Phantoms - AI Pipeline")
@@ -318,12 +318,12 @@ class CombinedPoseSegmentationPipeline(GStreamerApp):
         hailo_logger.debug("Creating game pipeline...")
         Gst.init(None)
         pipeline_string = self.get_pipeline_string()
-        hailo_logger.debug(f"Pipeline string: {pipeline_string}")
+        hailo_logger.debug("Pipeline string: %s", pipeline_string)
 
         try:
             self.pipeline = Gst.parse_launch(pipeline_string)
         except Exception as e:
-            hailo_logger.error(f"Error creating pipeline: {e}")
+            hailo_logger.error("Error creating pipeline: %s", e)
             print(f"Error creating pipeline: {e}", file=sys.stderr)
             sys.exit(1)
 
@@ -401,7 +401,7 @@ class CombinedPoseSegmentationPipeline(GStreamerApp):
             f"{sink}"
         )
 
-        hailo_logger.debug(f"Pipeline: {pipeline_string}")
+        hailo_logger.debug("Pipeline: %s", pipeline_string)
         return pipeline_string
 
     def start(self) -> None:

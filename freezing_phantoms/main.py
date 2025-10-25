@@ -52,20 +52,20 @@ class FreezingPhantomsGame:
         with open(config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
-        hailo_logger.info(f"Loaded configuration from {config_path}")
+        hailo_logger.info("Loaded configuration from %s", config_path)
         if debug_mode:
             hailo_logger.info("DEBUG MODE: Video output enabled")
 
         # Load calibration matrix
         if not calibration_path.exists():
-            hailo_logger.error(f"Calibration file not found: {calibration_path}")
+            hailo_logger.error("Calibration file not found: %s", calibration_path)
             raise FileNotFoundError(
                 f"Calibration matrix not found at {calibration_path}. "
                 f"Please run calibration first."
             )
 
         self.homography_matrix = np.load(calibration_path)
-        hailo_logger.info(f"Loaded calibration matrix from {calibration_path}")
+        hailo_logger.info("Loaded calibration matrix from %s", calibration_path)
 
         # Extract config values
         self.camera_resolution = tuple(self.config["camera"]["resolution"])
@@ -121,7 +121,7 @@ class FreezingPhantomsGame:
         Args:
             video_source (str): Video source path or device.
         """
-        hailo_logger.info(f"Starting AI pipeline with source: {video_source}")
+        hailo_logger.info("Starting AI pipeline with source: %s", video_source)
 
         # Use frame rate from Hailo options if provided, otherwise use config
         frame_rate = getattr(self.hailo_options, 'frame_rate', None) or self.fps
@@ -166,7 +166,7 @@ class FreezingPhantomsGame:
                 if self.pipeline:
                     player_data = self.pipeline.get_latest_data(timeout=0.01)
                     if player_data:
-                        hailo_logger.debug(f"Got player data: {len(player_data.get('players', []))} players")
+                        hailo_logger.debug("Got player data: %d players", len(player_data.get('players', [])))
                     else:
                         hailo_logger.debug("No player data from pipeline")
 
@@ -176,7 +176,7 @@ class FreezingPhantomsGame:
                 # Check for movement during RED_LIGHT
                 if self.game_state.current == GameState.RED_LIGHT:
                     if player_data:
-                        hailo_logger.debug(f"RED_LIGHT: Checking movement for {len(player_data.get('players', []))} players")
+                        hailo_logger.debug("RED_LIGHT: Checking movement for %d players", len(player_data.get('players', [])))
                         self._check_for_movement(player_data)
                     else:
                         hailo_logger.debug("RED_LIGHT: No player data available for movement check")
@@ -212,7 +212,7 @@ class FreezingPhantomsGame:
             hailo_logger.info("Keyboard interrupt received")
 
         except Exception as e:
-            hailo_logger.error(f"Error in game loop: {e}", exc_info=True)
+            hailo_logger.error("Error in game loop: %s", e, exc_info=True)
 
         finally:
             self.cleanup()
@@ -226,7 +226,7 @@ class FreezingPhantomsGame:
         """
         frozen_poses = self.game_state.get_frozen_poses()
 
-        hailo_logger.debug(f"_check_for_movement called: frozen_poses={len(frozen_poses) if frozen_poses else 0}, "
+        hailo_logger.debug("_check_for_movement called: frozen_poses=%d, "
                           f"player_data={'players' in player_data if player_data else False}")
 
         if not frozen_poses:
@@ -238,22 +238,22 @@ class FreezingPhantomsGame:
             return
 
         current_players = player_data["players"]
-        hailo_logger.debug(f"Checking movement: {len(frozen_poses)} frozen, {len(current_players)} current")
+        hailo_logger.debug("Checking movement: %d frozen, %d current", len(frozen_poses), len(current_players))
 
         # Detect movement for each player
         movement_results = self.movement_detector.detect_player_movement(
             frozen_poses, current_players
         )
 
-        hailo_logger.debug(f"Movement results: {len(movement_results)} players checked")
+        hailo_logger.debug("Movement results: %d players checked", len(movement_results))
 
         # Register caught players
         for track_id, (moved, displacement, keypoint) in movement_results.items():
             if moved:
                 self.game_state.register_caught_player(track_id)
                 hailo_logger.info(
-                    f"Player {track_id} moved! "
-                    f"{keypoint} displaced {displacement:.1f}px"
+                    "Player %d moved! %s displaced %.1fpx",
+                    track_id, keypoint, displacement
                 )
 
     def cleanup(self) -> None:
@@ -344,7 +344,7 @@ def main():
         os.environ["LOG_LEVEL"] = args.log_level
         # Update existing loggers
         logging.getLogger().setLevel(getattr(logging, args.log_level))
-        hailo_logger.info(f"Log level set to {args.log_level}")
+        hailo_logger.info("Log level set to %s", args.log_level)
 
     # Handle video source: use --input if provided, otherwise --video-source
     video_source = args.input or args.video_source or "/dev/video0"
@@ -384,9 +384,9 @@ def main():
 
     # Log standard Hailo options if provided
     if args.arch:
-        hailo_logger.info(f"Using specified architecture: {args.arch}")
+        hailo_logger.info("Using specified architecture: %s", args.arch)
     if args.hef_path:
-        hailo_logger.info(f"Using custom HEF path: {args.hef_path}")
+        hailo_logger.info("Using custom HEF path: %s", args.hef_path)
     if args.dump_dot:
         hailo_logger.info("Pipeline graph dumping enabled")
 
