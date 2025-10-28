@@ -335,16 +335,45 @@ class CalibrationTool:
             else:
                 print(f"✅ Using all {len(camera_centers)} points")
 
+            # ===================
+            # FIX: Compensate for projector flip
+            # ===================
+            # User reported up->down and left->right inversion, which implies both axes are flipped.
+            # This happens if findChessboardCorners finds points in the opposite order
+            # of the generated points because the projector is inverted.
+            # We must re-order the detected camera points to match the generated projector points.
+            print("ℹ️  Applying compensation for projector X-Y flip (up->down, left->right)")
+            hailo_logger.info("Re-ordering camera points to compensate for projector flip")
+
+            try:
+                # Reshape to (rows, cols, 2) to perform axis flips
+                cam_centers_grid = camera_centers.reshape((self.pattern_rows, self.pattern_cols, 2))
+
+                # Flip vertically (axis 0) to fix up->down inversion
+                cam_centers_grid = np.flip(cam_centers_grid, axis=0)
+
+                # Flip horizontally (axis 1) to fix left->right inversion
+                cam_centers_grid = np.flip(cam_centers_grid, axis=1)
+
+                # Reshape back to (N, 2)
+                camera_centers_ordered = cam_centers_grid.reshape((-1, 2))
+
+            except ValueError as e:
+                hailo_logger.error(
+                    f"Failed to reshape camera_centers: {e}. "
+                    f"Shape was {camera_centers.shape}, expected {self.pattern_rows * self.pattern_cols} points."
+                )
+                print(f"❌ Failed to re-order points. Make sure all {self.pattern_rows * self.pattern_cols} points were detected.")
+                continue  # Try next attempt
+
             # Calculate homography matrix
             print("\n🧮 Calculating homography matrix...")
             hailo_logger.info("Calculating homography...")
 
             try:
-                # Calculate homography matrix - use OpenCV result directly
-                # If axes are inverted, it's likely due to projector display flip settings
-                # The homography matrix will naturally compensate for this
+                # Calculate homography matrix using the re-ordered points
                 homography_matrix, mask = cv2.findHomography(
-                    camera_centers, projector_centers, cv2.RANSAC, 5.0
+                    camera_centers_ordered, projector_centers, cv2.RANSAC, 5.0
                 )
             except (cv2.error, ValueError, TypeError) as e:
                 hailo_logger.error("Homography calculation failed: %s", e)
