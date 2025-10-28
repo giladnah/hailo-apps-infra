@@ -5,7 +5,7 @@ Extracts structured player information from Hailo buffer data.
 """
 
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import hailo
@@ -49,6 +49,8 @@ class PlayerData:
         pose_keypoints (Dict[str, tuple]): Dictionary of keypoint names to (x, y) coordinates.
         pose_keypoint_confidences (Dict[str, float]): Dictionary of keypoint names to confidence scores.
         segmentation_mask (Optional[np.ndarray]): Segmentation mask (H, W).
+        leg_position (Optional[Tuple[float, float]]): Detected leg position (x, y) in camera coordinates.
+        leg_confidence (float): Confidence score for leg position detection.
     """
 
     def __init__(
@@ -59,6 +61,8 @@ class PlayerData:
         pose_keypoints: Dict[str, tuple],
         pose_keypoint_confidences: Dict[str, float] = None,
         segmentation_mask: Optional[np.ndarray] = None,
+        leg_position: Optional[Tuple[float, float]] = None,
+        leg_confidence: float = 0.0,
     ):
         """
         Initialize player data.
@@ -70,6 +74,8 @@ class PlayerData:
             pose_keypoints (Dict[str, tuple]): Pose keypoint coordinates.
             pose_keypoint_confidences (Dict[str, float], optional): Keypoint confidence scores.
             segmentation_mask (Optional[np.ndarray]): Segmentation mask.
+            leg_position (Optional[Tuple[float, float]]): Detected leg position in camera coordinates.
+            leg_confidence (float): Confidence score for leg position detection.
         """
         self.track_id = track_id
         self.bbox = bbox
@@ -77,6 +83,8 @@ class PlayerData:
         self.pose_keypoints = pose_keypoints
         self.pose_keypoint_confidences = pose_keypoint_confidences or {}
         self.segmentation_mask = segmentation_mask
+        self.leg_position = leg_position
+        self.leg_confidence = leg_confidence
 
     def to_dict(self) -> Dict:
         """
@@ -92,6 +100,8 @@ class PlayerData:
             "pose_keypoints": self.pose_keypoints,
             "pose_keypoint_confidences": self.pose_keypoint_confidences,
             "segmentation_mask": self.segmentation_mask,
+            "leg_position": self.leg_position,
+            "leg_confidence": self.leg_confidence,
         }
 
 
@@ -163,8 +173,8 @@ class DataExtractor:
             # Extract segmentation mask
             segmentation_mask = self._extract_segmentation_mask(detection, bbox)
 
-            # Create player data object
-            player = PlayerData(
+            # Create temporary player data for leg detection
+            temp_player = PlayerData(
                 track_id=track_id,
                 bbox={
                     "xmin": bbox.xmin(),
@@ -178,12 +188,33 @@ class DataExtractor:
                 segmentation_mask=segmentation_mask,
             )
 
+            # Detect leg position using segmentation mask
+            leg_position, leg_confidence = self.detect_leg_position(temp_player)
+
+            # Create final player data object with leg position
+            player = PlayerData(
+                track_id=track_id,
+                bbox={
+                    "xmin": bbox.xmin(),
+                    "ymin": bbox.ymin(),
+                    "width": bbox.width(),
+                    "height": bbox.height(),
+                },
+                confidence=confidence,
+                pose_keypoints=pose_keypoints,
+                pose_keypoint_confidences=pose_keypoint_confidences,
+                segmentation_mask=segmentation_mask,
+                leg_position=leg_position,
+                leg_confidence=leg_confidence,
+            )
+
             players.append(player)
             hailo_logger.debug(
-                "Extracted player: track_id=%d, keypoints=%d, has_mask=%s",
+                "Extracted player: track_id=%d, keypoints=%d, has_mask=%s, leg_pos=%s",
                 track_id,
                 len(pose_keypoints),
-                segmentation_mask is not None
+                segmentation_mask is not None,
+                leg_position
             )
 
         return {"players": players, "timestamp": timestamp}
@@ -294,6 +325,60 @@ class DataExtractor:
             return full_mask
 
         return None
+
+    def detect_leg_position(self, player_data: PlayerData) -> Tuple[Optional[Tuple[float, float]], float]:
+        """
+        Detect leg position using segmentation mask.
+
+        Uses the lowest pixel in the segmentation mask to find foot position.
+        This is more efficient than pose keypoints and works even when pose is occluded.
+
+        Args:
+            player_data (PlayerData): Player data with segmentation mask.
+
+        Returns:
+            Tuple[Optional[Tuple[float, float]], float]:
+                (leg_position, confidence) where leg_position is (x, y) in camera coordinates
+        """
+        if player_data.segmentation_mask is None:
+            hailo_logger.debug("No segmentation mask available for leg detection")
+            return None, 0.0
+
+        mask = player_data.segmentation_mask
+
+        # Find the lowest (highest y-coordinate) non-zero pixel in the mask
+        # This represents the bottom of the feet
+        leg_y = -1
+        leg_x = -1
+
+        # Search from bottom to top for efficiency
+        for y in range(mask.shape[0] - 1, -1, -1):
+            row = mask[y, :]
+            non_zero_indices = np.where(row > 0)[0]
+
+            if len(non_zero_indices) > 0:
+                # Found the bottom row with non-zero pixels
+                leg_y = y
+                # Use the center of the non-zero pixels as x position
+                leg_x = int(np.mean(non_zero_indices))
+                break
+
+        if leg_y == -1 or leg_x == -1:
+            hailo_logger.debug("No valid leg position found in segmentation mask")
+            return None, 0.0
+
+        # Calculate confidence based on mask quality
+        # More non-zero pixels in the bottom row = higher confidence
+        bottom_row = mask[leg_y, :]
+        non_zero_count = np.count_nonzero(bottom_row)
+        confidence = min(1.0, non_zero_count / 50.0)  # Normalize to 0-1
+
+        hailo_logger.debug(
+            "Leg position detected: (%d, %d) with confidence %.2f",
+            leg_x, leg_y, confidence
+        )
+
+        return (float(leg_x), float(leg_y)), confidence
 
 
 def get_keypoint_names() -> List[str]:

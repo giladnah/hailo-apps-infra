@@ -18,9 +18,12 @@ import yaml
 from hailo_apps.hailo_app_python.core.common.hailo_logger import get_logger
 from freezing_phantoms.calibration.calibration_tool import CalibrationTool
 from freezing_phantoms.core.audio_manager import AudioManager
+from freezing_phantoms.core.board_system import BoardSystem
 from freezing_phantoms.core.game_state import GameState, GameStateMachine
+from freezing_phantoms.core.ghost_system import GhostManager
 from freezing_phantoms.core.movement_detector import MovementDetector
 from freezing_phantoms.core.projection_renderer import ProjectionRenderer
+from freezing_phantoms.effects.board_effects import BoardEffects
 from freezing_phantoms.pipeline.combined_pipeline import CombinedPoseSegmentationPipeline
 
 hailo_logger = get_logger(__name__)
@@ -105,6 +108,20 @@ class FreezingPhantomsGame:
         # Register audio callback with game state
         self.game_state.set_audio_callback(self.audio_manager.play_state_audio)
 
+        # Board system
+        board_config = self.config.get("board", {})
+        self.board_system = BoardSystem(board_config)
+
+        # Ghost manager
+        self.ghost_manager = GhostManager(board_config, self.board_system)
+
+        # Board effects
+        self.board_effects = BoardEffects(
+            self.board_system,
+            self.ghost_manager,
+            debug_mode=self.debug_mode
+        )
+
         # AI pipeline (will be started later)
         self.pipeline = None
 
@@ -173,6 +190,24 @@ class FreezingPhantomsGame:
                 # Update game state
                 self.game_state.update(dt, player_data)
 
+                # Update board system (ghosts)
+                if player_data and "players" in player_data:
+                    # Extract leg positions for ghost AI
+                    player_positions = {}
+                    for player in player_data["players"]:
+                        if hasattr(player, 'leg_position') and player.leg_position is not None:
+                            # Transform leg position to projector coordinates
+                            projector_pos = self.renderer.transform_point(player.leg_position[0], player.leg_position[1])
+                            if projector_pos is not None:
+                                player_positions[player.track_id] = projector_pos
+
+                    # Update ghosts with player positions
+                    self.ghost_manager.update(player_positions, dt)
+
+                # Check for board collisions
+                if player_data and "players" in player_data:
+                    self._check_board_collisions(player_data)
+
                 # Check for movement during RED_LIGHT
                 if self.game_state.current == GameState.RED_LIGHT:
                     if player_data:
@@ -188,6 +223,15 @@ class FreezingPhantomsGame:
                     caught_players=self.game_state.get_caught_players(),
                     frame_width=self.camera_resolution[0],
                     frame_height=self.camera_resolution[1],
+                )
+
+                # Render board elements (obstacles, ghosts, debug)
+                projection_frame = self.board_effects.render_board(
+                    projection_frame,
+                    self.renderer.transform_point,
+                    player_data,
+                    self.camera_resolution[0],
+                    self.camera_resolution[1]
                 )
 
                 # Display projection
@@ -255,6 +299,39 @@ class FreezingPhantomsGame:
                     "Player %d moved! %s displaced %.1fpx",
                     track_id, keypoint, displacement
                 )
+
+    def _check_board_collisions(self, player_data: dict) -> None:
+        """
+        Check for collisions between players and board elements.
+
+        Args:
+            player_data (dict): Current player data.
+        """
+        if not player_data or "players" not in player_data:
+            return
+
+        for player in player_data["players"]:
+            if not hasattr(player, 'leg_position') or player.leg_position is None:
+                continue
+
+            # Transform leg position to projector coordinates
+            projector_pos = self.renderer.transform_point(player.leg_position[0], player.leg_position[1])
+            if projector_pos is None:
+                continue
+
+            # Check for collisions with board
+            collision_radius = 15.0  # Collision radius around player
+            if self.board_system.check_collision(projector_pos, collision_radius):
+                hailo_logger.info(
+                    "Player %d collided with board obstacle at (%.1f, %.1f)",
+                    player.track_id, projector_pos[0], projector_pos[1]
+                )
+
+                # Register as caught player for collision
+                self.game_state.register_caught_player(player.track_id)
+
+                # You could add specific collision effects here
+                # For example, different penalties for different obstacle types
 
     def cleanup(self) -> None:
         """Clean up all resources."""

@@ -64,11 +64,303 @@ class CalibrationTool:
             f"pattern={self.pattern_rows}x{self.pattern_cols}"
         )
 
+    def _visualize_detected_points(
+        self,
+        image: np.ndarray,
+        centers: np.ndarray,
+        title: str = "Detected Calibration Points"
+    ) -> None:
+        """
+        Visualize detected points on the image.
+
+        Args:
+            image (np.ndarray): Camera image.
+            centers (np.ndarray): Detected circle centers.
+            title (str): Window title.
+        """
+        vis_image = image.copy()
+
+        # Draw detected circles in green
+        for center in centers:
+            cv2.circle(vis_image, tuple(center.astype(int)), 10, (0, 255, 0), 2)
+            # Add semi-transparent fill
+            overlay = vis_image.copy()
+            cv2.circle(overlay, tuple(center.astype(int)), 15, (0, 255, 0), -1)
+            cv2.addWeighted(overlay, 0.3, vis_image, 0.7, 0, vis_image)
+
+        # Add information overlay
+        overlay = vis_image.copy()
+        cv2.rectangle(overlay, (0, 0), (vis_image.shape[1], 120), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.7, vis_image, 0.3, 0, vis_image)
+
+        cv2.putText(vis_image, f"Detected: {len(centers)} points", (10, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        cv2.putText(vis_image, "Green circles = Detected points", (10, 60),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+        cv2.putText(vis_image, "Press any key to continue...", (10, 90),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1)
+
+        cv2.imshow(title, vis_image)
+
+    def _handle_insufficient_points(
+        self,
+        camera_image: np.ndarray,
+        detected_centers: np.ndarray,
+        camera_source: str,
+        min_required_points: int,
+        output_path: Optional[Path] = None,
+    ) -> Optional[np.ndarray]:
+        """
+        Handle case when insufficient calibration points are detected.
+        Shows visualization and allows parameter adjustment or retry.
+
+        Args:
+            camera_image (np.ndarray): Captured camera image.
+            detected_centers (np.ndarray): Currently detected centers.
+            camera_source (str): Camera device path.
+            min_required_points (int): Minimum required points.
+            output_path (Optional[Path]): Path to save calibration matrix.
+
+        Returns:
+            np.ndarray: Homography matrix if retry succeeds, None otherwise.
+        """
+        print("\n" + "="*70)
+        print("CALIBRATION ADJUSTMENT MODE")
+        print("="*70)
+
+        # Show visualization of detected points
+        self._visualize_detected_points(camera_image, detected_centers, "Current Detection - Press any key")
+        print("\n✓ Showing detected points...")
+        print(f"   Current: {len(detected_centers)} points detected")
+        cv2.waitKey(0)
+
+        print("\nOptions:")
+        print("1. R/r - Retry with adjusted parameters")
+        print("2. C/c - Capture new image")
+        print("3. A/a - Accept current points (may be inaccurate)")
+        print("4. Q/q or ESC - Cancel calibration")
+        print("\n👉 Your choice: ", end="")
+
+        # Interactive loop for adjustments
+        while True:
+            # Create adjustment window with trackbars
+            adj_window = "Adjustment Mode - Press 'R' to retry, 'C' to recapture, 'A' to accept, ESC to cancel"
+            cv2.namedWindow(adj_window, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(adj_window, 800, 600)
+
+            # Current detection parameters
+            param1_var = 50
+            param2_var = 30
+            min_dist_var = 150
+            min_radius_var = max(40, self.circle_radius // 2)
+            max_radius_var = min(250, self.circle_radius * 3)
+
+            # Create trackbars for parameter adjustment
+            cv2.createTrackbar('Param1', adj_window, param1_var, 200, lambda x: None)
+            cv2.createTrackbar('Param2', adj_window, param2_var, 100, lambda x: None)
+            cv2.createTrackbar('MinDist', adj_window, min_dist_var, 300, lambda x: None)
+            cv2.createTrackbar('MinRadius', adj_window, min_radius_var, 150, lambda x: None)
+            cv2.createTrackbar('MaxRadius', adj_window, max_radius_var, 300, lambda x: None)
+
+            # Show instructions
+            instruction_image = np.zeros((300, 600, 3), dtype=np.uint8)
+            cv2.putText(instruction_image, "Adjustment Controls:", (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            cv2.putText(instruction_image, "R - Retry detection with current params", (10, 70),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(instruction_image, "C - Capture new image", (10, 100),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(instruction_image, "A - Accept current points", (10, 130),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(instruction_image, "ESC/Q - Cancel", (10, 160),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(instruction_image, f"Current: {len(detected_centers)} points", (10, 200),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            cv2.putText(instruction_image, f"Required: {min_required_points} points", (10, 230),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+
+            cv2.imshow("Instructions", instruction_image)
+
+            # Show current detection result
+            temp_vis = camera_image.copy()
+            for center in detected_centers:
+                cv2.circle(temp_vis, tuple(center.astype(int)), 10, (0, 255, 0), 2)
+            cv2.imshow(adj_window, temp_vis)
+
+            # Wait for user input
+            key = cv2.waitKey(30) & 0xFF
+
+            # Get current trackbar values
+            if cv2.getWindowProperty(adj_window, cv2.WND_PROP_VISIBLE) >= 1:
+                param1_var = cv2.getTrackbarPos('Param1', adj_window)
+                param2_var = cv2.getTrackbarPos('Param2', adj_window)
+                min_dist_var = cv2.getTrackbarPos('MinDist', adj_window)
+                min_radius_var = cv2.getTrackbarPos('MinRadius', adj_window)
+                max_radius_var = cv2.getTrackbarPos('MaxRadius', adj_window)
+
+            # Handle key presses
+            if key == 27 or key == ord('q') or key == ord('Q'):
+                print("Canceled")
+                hailo_logger.info("Calibration adjustment cancelled by user")
+                cv2.destroyAllWindows()
+                return None
+
+            elif key == ord('r') or key == ord('R'):
+                print("Retrying detection with adjusted parameters...")
+                hailo_logger.info(f"Retrying detection with params: param1={param1_var}, "
+                                f"param2={param2_var}, minDist={min_dist_var}, "
+                                f"minRadius={min_radius_var}, maxRadius={max_radius_var}")
+
+                # Try detection with adjusted parameters
+                new_centers = self._detect_with_params(
+                    camera_image,
+                    param1=param1_var if param1_var > 0 else 50,
+                    param2=param2_var if param2_var > 0 else 30,
+                    min_dist=min_dist_var if min_dist_var > 0 else 100,
+                    min_radius=min_radius_var if min_radius_var > 0 else 40,
+                    max_radius=max_radius_var if max_radius_var > 0 else 160
+                )
+
+                if new_centers is not None and len(new_centers) >= min_required_points:
+                    print(f"✓ Success! Detected {len(new_centers)} points")
+                    cv2.destroyAllWindows()
+                    # Continue with new centers
+                    detected_centers = new_centers
+                    break
+                else:
+                    detected_count = len(new_centers) if new_centers is not None else 0
+                    print(f"Still not enough points: {detected_count} < {min_required_points}")
+                    if new_centers is not None:
+                        detected_centers = new_centers
+                        # Update visualization
+                        temp_vis = camera_image.copy()
+                        for center in detected_centers:
+                            cv2.circle(temp_vis, tuple(center.astype(int)), 10, (0, 255, 0), 2)
+                        cv2.imshow(adj_window, temp_vis)
+                        cv2.waitKey(100)
+
+            elif key == ord('c') or key == ord('C'):
+                print("Capturing new image...")
+                cv2.destroyAllWindows()
+                # Recapture image and retry entire calibration
+                return self.run_calibration(camera_source, output_path, min_required_points)
+
+            elif key == ord('a') or key == ord('A'):
+                print("Accepting current points (may be inaccurate)...")
+                hailo_logger.warning("Accepting insufficient points for calibration")
+                cv2.destroyAllWindows()
+                # Continue with current detected centers
+                break
+
+        cv2.destroyAllWindows()
+
+        # If we have the centers, continue with calibration using them
+        if len(detected_centers) > 0:
+            # Get expected pattern centers
+            _, projector_centers = generate_calibration_pattern(
+                resolution=self.projector_resolution,
+                rows=self.pattern_rows,
+                cols=self.pattern_cols,
+                circle_radius=self.circle_radius,
+                spacing=self.circle_spacing,
+            )
+
+            # Sort and match points
+            camera_centers = sort_circle_centers(
+                detected_centers, self.pattern_rows, self.pattern_cols
+            )
+
+            # Calculate homography
+            min_points = min(len(camera_centers), len(projector_centers))
+            camera_centers = camera_centers[:min_points]
+            projector_centers = projector_centers[:min_points]
+
+            print(f"\n🧮 Calculating homography with {min_points} points...")
+
+            try:
+                homography_matrix, mask = cv2.findHomography(
+                    camera_centers, projector_centers, cv2.RANSAC, 5.0
+                )
+
+                if homography_matrix is not None:
+                    inliers = np.sum(mask)
+                    inlier_ratio = inliers / len(mask) * 100 if len(mask) > 0 else 0
+                    print(f"✓ Homography calculated ({inliers}/{len(mask)} inliers, {inlier_ratio:.1f}%)")
+
+                    # Save homography matrix if output_path provided
+                    if output_path:
+                        np.save(output_path, homography_matrix)
+                        hailo_logger.info(f"Homography matrix saved to {output_path}")
+                        print(f"\n✓ Calibration successful! Matrix saved to {output_path}\n")
+
+                    return homography_matrix
+                else:
+                    print("❌ Homography calculation failed")
+                    return None
+            except Exception as e:
+                hailo_logger.error(f"Failed to calculate homography: {e}")
+                print(f"❌ Error: {e}")
+                return None
+
+        return None
+
+    def _detect_with_params(
+        self,
+        image: np.ndarray,
+        param1: int = 50,
+        param2: int = 30,
+        min_dist: int = 100,
+        min_radius: int = 40,
+        max_radius: int = 160
+    ) -> Optional[np.ndarray]:
+        """
+        Detect circles with specific parameters.
+
+        Args:
+            image (np.ndarray): Input image.
+            param1 (int): First HoughCircles parameter (edge detection).
+            param2 (int): Second HoughCircles parameter (accumulator threshold).
+            min_dist (int): Minimum distance between circles.
+            min_radius (int): Minimum circle radius.
+            max_radius (int): Maximum circle radius.
+
+        Returns:
+            np.ndarray: Detected centers or None.
+        """
+        # Convert to grayscale
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image
+
+        # Apply Gaussian blur
+        blurred = cv2.GaussianBlur(gray, (9, 9), 2)
+
+        # Detect circles
+        circles = cv2.HoughCircles(
+            blurred,
+            cv2.HOUGH_GRADIENT,
+            dp=1,
+            minDist=min_dist,
+            param1=param1,
+            param2=param2,
+            minRadius=min_radius,
+            maxRadius=max_radius,
+        )
+
+        if circles is None:
+            return None
+
+        circles = np.uint16(np.around(circles))
+        centers = circles[0, :, :2].astype(np.float32)
+
+        return centers
+
     def run_calibration(
         self,
         camera_source: str = "/dev/video0",
         output_path: Path = None,
-        min_required_points: int = 20,
+        min_required_points: int = 12,
     ) -> Optional[np.ndarray]:
         """
         Run the calibration procedure.
@@ -245,8 +537,15 @@ class CalibrationTool:
             print(f"   Need at least {min_required_points} points")
             print(f"   Only found {detected_count} points")
             print(f"   Missing {min_required_points - detected_count} points")
-            cv2.destroyAllWindows()
-            return None
+
+            # Show visualization and allow adjustment
+            return self._handle_insufficient_points(
+                camera_image,
+                camera_centers,
+                camera_source,
+                min_required_points,
+                output_path
+            )
 
         # Warn if significantly fewer than expected
         if detected_count < expected_count * 0.8:

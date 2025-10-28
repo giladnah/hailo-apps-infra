@@ -85,7 +85,7 @@ def generate_calibration_pattern(
 
 
 def detect_circle_centers(
-    image: np.ndarray, expected_count: int = 48, min_radius: int = 20, max_radius: int = 60
+    image: np.ndarray, expected_count: int = 20, min_radius: int = 40, max_radius: int = 160
 ) -> np.ndarray:
     """
     Detect circle centers in the captured camera image.
