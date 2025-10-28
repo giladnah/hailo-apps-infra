@@ -442,15 +442,34 @@ def main():
                 return
 
         if args.run_calibration:
+            print("\n" + "="*70)
+            print("CALIBRATION WITH VALIDATION")
+            print("="*70)
+            print("The calibration process will:")
+            print("1. Generate and display checkerboard pattern")
+            print("2. Capture camera image and detect corners")
+            print("3. Calculate homography matrix")
+            print("4. Run validation test")
+            print("5. Allow you to accept/reject the calibration")
+            print("6. Retry if rejected (up to 3 attempts)")
+            print("="*70)
+            print()
+
             homography = tool.run_calibration(
-                camera_source=video_source, output_path=args.calibration
+                camera_source=video_source,
+                output_path=args.calibration,
+                auto_validate=True,
+                max_retries=3
             )
             if homography is None:
-                print("Calibration failed!")
+                print("\n❌ Calibration failed or was cancelled!")
+                print("   Check calibration_history/ directory for debug information")
                 sys.exit(1)
 
-            print("\nCalibration complete! Starting game...")
-            time.sleep(2)
+            print("\n✅ Calibration completed successfully!")
+            print("   Calibration matrix saved and ready for use.")
+            print("   Run the game separately with: python main.py")
+            return  # Exit without starting the game
 
     # Check if calibration exists
     if not args.calibration.exists():

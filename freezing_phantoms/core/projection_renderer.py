@@ -4,7 +4,6 @@ Projection renderer for Freezing Phantoms game.
 Renders game graphics using homography-based coordinate transformation.
 """
 
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import cv2
@@ -62,10 +61,9 @@ class ProjectionRenderer:
             self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN
         )
 
-        # Move to projector display
-        # Note: Position depends on system configuration
+        # Move to projector display (HDMI-1 at position 0,0)
         if self.display_index > 0:
-            cv2.moveWindow(self.window_name, self.projector_resolution[0], 0)
+            cv2.moveWindow(self.window_name, 0, 0)
 
         hailo_logger.info(f"Created fullscreen window: {self.window_name}")
 
@@ -115,11 +113,11 @@ class ProjectionRenderer:
         top_left = self.transform_point(x_min, y_min)
         bottom_right = self.transform_point(x_max, y_max)
 
-        # Calculate projector bbox
-        proj_x = top_left[0]
-        proj_y = top_left[1]
-        proj_width = bottom_right[0] - top_left[0]
-        proj_height = bottom_right[1] - top_left[1]
+        # Calculate projector bbox (handle negative dimensions with abs)
+        proj_x = min(top_left[0], bottom_right[0])
+        proj_y = min(top_left[1], bottom_right[1])
+        proj_width = abs(bottom_right[0] - top_left[0])
+        proj_height = abs(bottom_right[1] - top_left[1])
 
         return proj_x, proj_y, proj_width, proj_height
 
@@ -225,19 +223,31 @@ class ProjectionRenderer:
                     player.bbox, frame_width, frame_height
                 )
 
-                # Draw safe zone (green glow)
-                center_x = proj_x + proj_w // 2
-                center_y = proj_y + proj_h // 2
+                # Skip if invalid bbox
+                if proj_w <= 0 or proj_h <= 0:
+                    continue
+
+                # Calculate center and ensure it's within bounds
+                center_x = int(proj_x + proj_w // 2)
+                center_y = int(proj_y + proj_h // 2)
+
+                # Skip if center is outside canvas
+                if center_x < 0 or center_x >= canvas.shape[1] or center_y < 0 or center_y >= canvas.shape[0]:
+                    continue
+
+                # Calculate base radius with safety margins
                 radius = max(proj_w, proj_h) // 2 + 20
+                radius = max(10, min(radius, min(canvas.shape[:2]) // 4))  # Clamp between 10 and reasonable max
 
-                # Animated pulsating circle
-                pulse_radius = int(radius + np.sin(self.frame_counter * 0.15) * 10)
-                alpha = int(abs(np.sin(self.frame_counter * 0.1)) * 100 + 50)
+                # Animated pulsating circle with clamped variation
+                pulse_variation = np.sin(self.frame_counter * 0.15) * 10
+                pulse_radius = int(max(5, radius + pulse_variation))  # Ensure minimum radius
 
-                # Draw translucent green circle
-                overlay = canvas.copy()
-                cv2.circle(overlay, (center_x, center_y), pulse_radius, (0, 255, 0), -1)
-                cv2.addWeighted(overlay, 0.3, canvas, 0.7, 0, canvas)
+                # Draw translucent green circle only if radius is valid
+                if pulse_radius > 0:
+                    overlay = canvas.copy()
+                    cv2.circle(overlay, (center_x, center_y), pulse_radius, (0, 255, 0), -1)
+                    cv2.addWeighted(overlay, 0.3, canvas, 0.7, 0, canvas)
 
         # Add swirling particles (optional enhancement)
         self._draw_particle_swirls(canvas, (150, 255, 150))
@@ -335,27 +345,41 @@ class ProjectionRenderer:
                         player.bbox, frame_width, frame_height
                     )
 
-                    center_x = proj_x + proj_w // 2
-                    center_y = proj_y + proj_h // 2
+                    # Skip if invalid bbox
+                    if proj_w <= 0 or proj_h <= 0:
+                        continue
+
+                    # Calculate center and ensure it's within bounds
+                    center_x = int(proj_x + proj_w // 2)
+                    center_y = int(proj_y + proj_h // 2)
+
+                    # Skip if center is outside canvas
+                    if center_x < 0 or center_x >= canvas.shape[1] or center_y < 0 or center_y >= canvas.shape[0]:
+                        continue
+
+                    # Calculate radius with safety limits
                     radius = max(proj_w, proj_h)
+                    radius = max(10, min(radius, min(canvas.shape[:2]) // 4))  # Clamp between 10 and reasonable max
 
                     # Pulsating red spotlight
                     pulse = int(abs(np.sin(self.frame_counter * 0.2)) * 100 + 155)
 
-                    overlay = canvas.copy()
-                    cv2.circle(overlay, (center_x, center_y), radius, (0, 0, pulse), -1)
-                    cv2.addWeighted(overlay, 0.5, canvas, 0.5, 0, canvas)
+                    # Only draw if radius is valid
+                    if radius > 0:
+                        overlay = canvas.copy()
+                        cv2.circle(overlay, (center_x, center_y), radius, (0, 0, pulse), -1)
+                        cv2.addWeighted(overlay, 0.5, canvas, 0.5, 0, canvas)
 
-                    # Draw "X" or "CAUGHT" text
-                    cv2.putText(
-                        canvas,
-                        "CAUGHT!",
-                        (center_x - 80, center_y),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        1.5,
-                        (255, 255, 255),
-                        3,
-                    )
+                        # Draw "CAUGHT!" text
+                        cv2.putText(
+                            canvas,
+                            "CAUGHT!",
+                            (center_x - 80, center_y),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            1.5,
+                            (255, 255, 255),
+                            3,
+                        )
 
         return canvas
 

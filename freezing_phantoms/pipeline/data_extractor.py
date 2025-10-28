@@ -256,7 +256,7 @@ class DataExtractor:
                 y = (point.y() * bbox.height() + bbox.ymin()) * self.frame_height
 
                 keypoints[keypoint_name] = (x, y)
-                confidences[keypoint_name] = point.confidence
+                confidences[keypoint_name] = point.confidence()
 
         hailo_logger.debug("Extracted %d keypoints with confidence scores", len(keypoints))
         return keypoints, confidences

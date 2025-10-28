@@ -1,12 +1,9 @@
 """
-Camera-projector calibration tool.
-
-Performs homography calibration by projecting a pattern and detecting it with the camera.
+Camera-projector calibration tool using checkerboard patterns.
 """
 
-import argparse
-import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -16,9 +13,8 @@ import yaml
 
 from hailo_apps.hailo_app_python.core.common.hailo_logger import get_logger
 from freezing_phantoms.calibration.pattern_generator import (
-    detect_circle_centers,
-    generate_calibration_pattern,
-    sort_circle_centers,
+    detect_checkerboard_corners,
+    generate_checkerboard_pattern,
 )
 
 hailo_logger = get_logger(__name__)
@@ -26,14 +22,15 @@ hailo_logger = get_logger(__name__)
 
 class CalibrationTool:
     """
-    Tool for calibrating camera-projector homography mapping.
+    Tool for calibrating camera-projector homography mapping using checkerboard patterns.
 
     Attributes:
         config (dict): Calibration configuration.
         camera_resolution (Tuple[int, int]): Camera resolution (width, height).
         projector_resolution (Tuple[int, int]): Projector resolution (width, height).
-        pattern_rows (int): Number of rows in calibration pattern.
-        pattern_cols (int): Number of columns in calibration pattern.
+        pattern_rows (int): Number of interior corner rows in checkerboard.
+        pattern_cols (int): Number of interior corner columns in checkerboard.
+        square_size (int): Size of each checkerboard square in pixels.
     """
 
     def __init__(self, config_path: Path):
@@ -54,592 +51,673 @@ class CalibrationTool:
         cal_config = self.config["calibration"]
         self.pattern_rows = cal_config["pattern_rows"]
         self.pattern_cols = cal_config["pattern_cols"]
-        self.circle_radius = cal_config["circle_radius"]
-        self.circle_spacing = cal_config["circle_spacing"]
+        self.square_size = cal_config.get("square_size", 100)
 
         hailo_logger.info(
-            f"Initialized calibration tool: "
-            f"camera={self.camera_resolution}, "
+            f"Initialized: camera={self.camera_resolution}, "
             f"projector={self.projector_resolution}, "
-            f"pattern={self.pattern_rows}x{self.pattern_cols}"
+            f"pattern={self.pattern_rows}x{self.pattern_cols}, "
+            f"square_size={self.square_size}"
         )
 
     def _visualize_detected_points(
-        self,
-        image: np.ndarray,
-        centers: np.ndarray,
-        title: str = "Detected Calibration Points"
+        self, image: np.ndarray, corners: np.ndarray, title: str = "Detected Corners"
     ) -> None:
         """
-        Visualize detected points on the image.
+        Visualize detected corners on the image.
 
         Args:
             image (np.ndarray): Camera image.
-            centers (np.ndarray): Detected circle centers.
+            corners (np.ndarray): Detected corner points.
             title (str): Window title.
         """
         vis_image = image.copy()
 
-        # Draw detected circles in green
-        for center in centers:
-            cv2.circle(vis_image, tuple(center.astype(int)), 10, (0, 255, 0), 2)
-            # Add semi-transparent fill
-            overlay = vis_image.copy()
-            cv2.circle(overlay, tuple(center.astype(int)), 15, (0, 255, 0), -1)
-            cv2.addWeighted(overlay, 0.3, vis_image, 0.7, 0, vis_image)
+        # Draw detected corners
+        for corner in corners:
+            cv2.circle(vis_image, tuple(corner.astype(int)), 8, (0, 255, 0), 2)
 
-        # Add information overlay
+        # Add text overlay
         overlay = vis_image.copy()
-        cv2.rectangle(overlay, (0, 0), (vis_image.shape[1], 120), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.7, vis_image, 0.3, 0, vis_image)
+        cv2.rectangle(overlay, (0, 0), (vis_image.shape[1], 80), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.6, vis_image, 0.4, 0, vis_image)
 
-        cv2.putText(vis_image, f"Detected: {len(centers)} points", (10, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-        cv2.putText(vis_image, "Green circles = Detected points", (10, 60),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-        cv2.putText(vis_image, "Press any key to continue...", (10, 90),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1)
-
-        cv2.imshow(title, vis_image)
-
-    def _handle_insufficient_points(
-        self,
-        camera_image: np.ndarray,
-        detected_centers: np.ndarray,
-        camera_source: str,
-        min_required_points: int,
-        output_path: Optional[Path] = None,
-    ) -> Optional[np.ndarray]:
-        """
-        Handle case when insufficient calibration points are detected.
-        Shows visualization and allows parameter adjustment or retry.
-
-        Args:
-            camera_image (np.ndarray): Captured camera image.
-            detected_centers (np.ndarray): Currently detected centers.
-            camera_source (str): Camera device path.
-            min_required_points (int): Minimum required points.
-            output_path (Optional[Path]): Path to save calibration matrix.
-
-        Returns:
-            np.ndarray: Homography matrix if retry succeeds, None otherwise.
-        """
-        print("\n" + "="*70)
-        print("CALIBRATION ADJUSTMENT MODE")
-        print("="*70)
-
-        # Show visualization of detected points
-        self._visualize_detected_points(camera_image, detected_centers, "Current Detection - Press any key")
-        print("\n✓ Showing detected points...")
-        print(f"   Current: {len(detected_centers)} points detected")
-        cv2.waitKey(0)
-
-        print("\nOptions:")
-        print("1. R/r - Retry with adjusted parameters")
-        print("2. C/c - Capture new image")
-        print("3. A/a - Accept current points (may be inaccurate)")
-        print("4. Q/q or ESC - Cancel calibration")
-        print("\n👉 Your choice: ", end="")
-
-        # Interactive loop for adjustments
-        while True:
-            # Create adjustment window with trackbars
-            adj_window = "Adjustment Mode - Press 'R' to retry, 'C' to recapture, 'A' to accept, ESC to cancel"
-            cv2.namedWindow(adj_window, cv2.WINDOW_NORMAL)
-            cv2.resizeWindow(adj_window, 800, 600)
-
-            # Current detection parameters
-            param1_var = 50
-            param2_var = 30
-            min_dist_var = 150
-            min_radius_var = max(40, self.circle_radius // 2)
-            max_radius_var = min(250, self.circle_radius * 3)
-
-            # Create trackbars for parameter adjustment
-            cv2.createTrackbar('Param1', adj_window, param1_var, 200, lambda x: None)
-            cv2.createTrackbar('Param2', adj_window, param2_var, 100, lambda x: None)
-            cv2.createTrackbar('MinDist', adj_window, min_dist_var, 300, lambda x: None)
-            cv2.createTrackbar('MinRadius', adj_window, min_radius_var, 150, lambda x: None)
-            cv2.createTrackbar('MaxRadius', adj_window, max_radius_var, 300, lambda x: None)
-
-            # Show instructions
-            instruction_image = np.zeros((300, 600, 3), dtype=np.uint8)
-            cv2.putText(instruction_image, "Adjustment Controls:", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            cv2.putText(instruction_image, "R - Retry detection with current params", (10, 70),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            cv2.putText(instruction_image, "C - Capture new image", (10, 100),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            cv2.putText(instruction_image, "A - Accept current points", (10, 130),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            cv2.putText(instruction_image, "ESC/Q - Cancel", (10, 160),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            cv2.putText(instruction_image, f"Current: {len(detected_centers)} points", (10, 200),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            cv2.putText(instruction_image, f"Required: {min_required_points} points", (10, 230),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-
-            cv2.imshow("Instructions", instruction_image)
-
-            # Show current detection result
-            temp_vis = camera_image.copy()
-            for center in detected_centers:
-                cv2.circle(temp_vis, tuple(center.astype(int)), 10, (0, 255, 0), 2)
-            cv2.imshow(adj_window, temp_vis)
-
-            # Wait for user input
-            key = cv2.waitKey(30) & 0xFF
-
-            # Get current trackbar values
-            if cv2.getWindowProperty(adj_window, cv2.WND_PROP_VISIBLE) >= 1:
-                param1_var = cv2.getTrackbarPos('Param1', adj_window)
-                param2_var = cv2.getTrackbarPos('Param2', adj_window)
-                min_dist_var = cv2.getTrackbarPos('MinDist', adj_window)
-                min_radius_var = cv2.getTrackbarPos('MinRadius', adj_window)
-                max_radius_var = cv2.getTrackbarPos('MaxRadius', adj_window)
-
-            # Handle key presses
-            if key == 27 or key == ord('q') or key == ord('Q'):
-                print("Canceled")
-                hailo_logger.info("Calibration adjustment cancelled by user")
-                cv2.destroyAllWindows()
-                return None
-
-            elif key == ord('r') or key == ord('R'):
-                print("Retrying detection with adjusted parameters...")
-                hailo_logger.info(f"Retrying detection with params: param1={param1_var}, "
-                                f"param2={param2_var}, minDist={min_dist_var}, "
-                                f"minRadius={min_radius_var}, maxRadius={max_radius_var}")
-
-                # Try detection with adjusted parameters
-                new_centers = self._detect_with_params(
-                    camera_image,
-                    param1=param1_var if param1_var > 0 else 50,
-                    param2=param2_var if param2_var > 0 else 30,
-                    min_dist=min_dist_var if min_dist_var > 0 else 100,
-                    min_radius=min_radius_var if min_radius_var > 0 else 40,
-                    max_radius=max_radius_var if max_radius_var > 0 else 160
-                )
-
-                if new_centers is not None and len(new_centers) >= min_required_points:
-                    print(f"✓ Success! Detected {len(new_centers)} points")
-                    cv2.destroyAllWindows()
-                    # Continue with new centers
-                    detected_centers = new_centers
-                    break
-                else:
-                    detected_count = len(new_centers) if new_centers is not None else 0
-                    print(f"Still not enough points: {detected_count} < {min_required_points}")
-                    if new_centers is not None:
-                        detected_centers = new_centers
-                        # Update visualization
-                        temp_vis = camera_image.copy()
-                        for center in detected_centers:
-                            cv2.circle(temp_vis, tuple(center.astype(int)), 10, (0, 255, 0), 2)
-                        cv2.imshow(adj_window, temp_vis)
-                        cv2.waitKey(100)
-
-            elif key == ord('c') or key == ord('C'):
-                print("Capturing new image...")
-                cv2.destroyAllWindows()
-                # Recapture image and retry entire calibration
-                return self.run_calibration(camera_source, output_path, min_required_points)
-
-            elif key == ord('a') or key == ord('A'):
-                print("Accepting current points (may be inaccurate)...")
-                hailo_logger.warning("Accepting insufficient points for calibration")
-                cv2.destroyAllWindows()
-                # Continue with current detected centers
-                break
-
-        cv2.destroyAllWindows()
-
-        # If we have the centers, continue with calibration using them
-        if len(detected_centers) > 0:
-            # Get expected pattern centers
-            _, projector_centers = generate_calibration_pattern(
-                resolution=self.projector_resolution,
-                rows=self.pattern_rows,
-                cols=self.pattern_cols,
-                circle_radius=self.circle_radius,
-                spacing=self.circle_spacing,
-            )
-
-            # Sort and match points
-            camera_centers = sort_circle_centers(
-                detected_centers, self.pattern_rows, self.pattern_cols
-            )
-
-            # Calculate homography
-            min_points = min(len(camera_centers), len(projector_centers))
-            camera_centers = camera_centers[:min_points]
-            projector_centers = projector_centers[:min_points]
-
-            print(f"\n🧮 Calculating homography with {min_points} points...")
-
-            try:
-                homography_matrix, mask = cv2.findHomography(
-                    camera_centers, projector_centers, cv2.RANSAC, 5.0
-                )
-
-                if homography_matrix is not None:
-                    inliers = np.sum(mask)
-                    inlier_ratio = inliers / len(mask) * 100 if len(mask) > 0 else 0
-                    print(f"✓ Homography calculated ({inliers}/{len(mask)} inliers, {inlier_ratio:.1f}%)")
-
-                    # Save homography matrix if output_path provided
-                    if output_path:
-                        np.save(output_path, homography_matrix)
-                        hailo_logger.info(f"Homography matrix saved to {output_path}")
-                        print(f"\n✓ Calibration successful! Matrix saved to {output_path}\n")
-
-                    return homography_matrix
-                else:
-                    print("❌ Homography calculation failed")
-                    return None
-            except Exception as e:
-                hailo_logger.error(f"Failed to calculate homography: {e}")
-                print(f"❌ Error: {e}")
-                return None
-
-        return None
-
-    def _detect_with_params(
-        self,
-        image: np.ndarray,
-        param1: int = 50,
-        param2: int = 30,
-        min_dist: int = 100,
-        min_radius: int = 40,
-        max_radius: int = 160
-    ) -> Optional[np.ndarray]:
-        """
-        Detect circles with specific parameters.
-
-        Args:
-            image (np.ndarray): Input image.
-            param1 (int): First HoughCircles parameter (edge detection).
-            param2 (int): Second HoughCircles parameter (accumulator threshold).
-            min_dist (int): Minimum distance between circles.
-            min_radius (int): Minimum circle radius.
-            max_radius (int): Maximum circle radius.
-
-        Returns:
-            np.ndarray: Detected centers or None.
-        """
-        # Convert to grayscale
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = image
-
-        # Apply Gaussian blur
-        blurred = cv2.GaussianBlur(gray, (9, 9), 2)
-
-        # Detect circles
-        circles = cv2.HoughCircles(
-            blurred,
-            cv2.HOUGH_GRADIENT,
-            dp=1,
-            minDist=min_dist,
-            param1=param1,
-            param2=param2,
-            minRadius=min_radius,
-            maxRadius=max_radius,
+        cv2.putText(
+            vis_image,
+            f"Detected: {len(corners)} points",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 255, 0),
+            2,
+        )
+        cv2.putText(
+            vis_image,
+            "Press any key to continue...",
+            (10, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            1,
         )
 
-        if circles is None:
-            return None
-
-        circles = np.uint16(np.around(circles))
-        centers = circles[0, :, :2].astype(np.float32)
-
-        return centers
+        cv2.imshow(title, vis_image)
 
     def run_calibration(
         self,
         camera_source: str = "/dev/video0",
         output_path: Path = None,
-        min_required_points: int = 12,
+        min_required_points: int = None,
+        auto_validate: bool = True,
+        max_retries: int = 3,
     ) -> Optional[np.ndarray]:
         """
-        Run the calibration procedure.
+        Run the calibration procedure with optional validation and retry logic.
 
         Args:
             camera_source (str): Camera device path or video file.
             output_path (Path, optional): Path to save calibration matrix.
-            min_required_points (int): Minimum number of points needed for calibration.
+            min_required_points (int, optional): Minimum number of points needed.
+            auto_validate (bool): Whether to automatically validate calibration.
+            max_retries (int): Maximum number of calibration attempts.
 
         Returns:
             np.ndarray: Homography matrix (3x3) or None if calibration failed.
         """
-        hailo_logger.info("Starting calibration procedure")
+        # Set default minimum points (70% of expected)
+        expected_points = self.pattern_rows * self.pattern_cols
+        if min_required_points is None:
+            min_required_points = int(expected_points * 0.7)
 
-        # Generate calibration pattern
-        pattern, projector_centers = generate_calibration_pattern(
-            resolution=self.projector_resolution,
-            rows=self.pattern_rows,
-            cols=self.pattern_cols,
-            circle_radius=self.circle_radius,
-            spacing=self.circle_spacing,
+        hailo_logger.info(f"Starting calibration (pattern: {self.pattern_rows}x{self.pattern_cols})")
+
+        # Create history directory for debugging
+        history_dir = Path("calibration_history") / datetime.now().strftime("%Y%m%d_%H%M%S")
+        history_dir.mkdir(parents=True, exist_ok=True)
+        hailo_logger.info(f"Calibration history will be saved to: {history_dir}")
+
+        for attempt in range(max_retries):
+            print(f"\n{'='*70}")
+            print(f"CALIBRATION ATTEMPT {attempt + 1}/{max_retries}")
+            print(f"{'='*70}")
+
+            if attempt > 0:
+                print("🔄 Retrying calibration...")
+                print("   Press SPACE to continue, ESC to exit")
+                key = cv2.waitKey(0) & 0xFF
+                if key == 27:  # ESC
+                    print("\n❌ Calibration cancelled by user\n")
+                    return None
+
+            # Generate checkerboard pattern
+            pattern, projector_centers = generate_checkerboard_pattern(
+                resolution=self.projector_resolution,
+                rows=self.pattern_rows,
+                cols=self.pattern_cols,
+                square_size=self.square_size,
+            )
+
+            if pattern is None or projector_centers is None:
+                hailo_logger.error("Failed to generate checkerboard pattern")
+                print("❌ Failed to generate checkerboard pattern!")
+                print("   Check pattern dimensions and resolution settings")
+                continue  # Try next attempt
+
+            hailo_logger.info(f"Generated checkerboard pattern with {len(projector_centers)} points")
+            print(f"✓ Generated {self.pattern_rows}x{self.pattern_cols} pattern with {len(projector_centers)} corners")
+
+            # Open camera (handle both device paths and numeric indices)
+            hailo_logger.info(f"Opening camera {camera_source}")
+            camera_source_parsed = (
+                int(camera_source) if camera_source.isdigit() else camera_source
+            )
+
+            cap = cv2.VideoCapture(camera_source_parsed)
+            if not cap.isOpened():
+                hailo_logger.error(f"Failed to open camera {camera_source}")
+                print(f"❌ Failed to open camera {camera_source}")
+                continue  # Try next attempt
+
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_resolution[0])
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_resolution[1])
+
+            # Create fullscreen window for projector
+            window_name = "Calibration Pattern"
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+            cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+            # Move to projector display (HDMI-1 at position 0,0)
+            cv2.moveWindow(window_name, 0, 0)
+
+            # Display pattern
+            # Note: Projectors may flip the image (mirror/reverse)
+            # Common projector settings can cause:
+            # 1. Horizontal flip (mirror mode) - reverses X axis
+            # 2. Vertical flip (ceiling mount) - reverses Y axis
+            # 3. Both flips - reverses both axes
+            # This could explain axis inversions in calibration!
+            cv2.imshow(window_name, pattern)
+            cv2.waitKey(100)
+
+            hailo_logger.info("Pattern displayed on projector")
+            hailo_logger.warning(
+                "If projector has any flip/mirror settings enabled, "
+                "this will affect the calibration coordinate system"
+            )
+
+            hailo_logger.info("Pattern displayed. Capturing camera image...")
+            print("\n" + "="*70)
+            print("CALIBRATION")
+            print("="*70)
+            print("1. Checkerboard is displayed on projector")
+            print("2. Press SPACE to capture image")
+            print("3. Press ESC to cancel")
+            print("="*70)
+            print("\nWaiting for capture...\n")
+
+            # Wait for user to capture
+            camera_image = None
+            camera_feed_window = "Camera Feed - Press SPACE to capture"
+            cv2.namedWindow(camera_feed_window, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(camera_feed_window, 640, 480)
+
+            time.sleep(0.5)
+
+            frame_count = 0
+            capture_successful = False
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    hailo_logger.error("Failed to read from camera")
+                    print("❌ Failed to read from camera")
+                    break
+
+                frame_count += 1
+
+                # Add instruction overlay
+                display_frame = frame.copy()
+                overlay = display_frame.copy()
+                cv2.rectangle(overlay, (0, 0), (display_frame.shape[1], 80), (0, 0, 0), -1)
+                cv2.addWeighted(overlay, 0.6, display_frame, 0.4, 0, display_frame)
+                cv2.putText(
+                    display_frame,
+                    "PRESS SPACE TO CAPTURE",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 255, 0),
+                    2,
+                )
+                cv2.putText(
+                    display_frame,
+                    "Press ESC to cancel",
+                    (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 255, 255),
+                    1,
+                )
+
+                cv2.imshow(camera_feed_window, display_frame)
+
+                key = cv2.waitKey(50) & 0xFF
+
+                if key == 27 or key == ord("q") or key == ord("Q"):  # ESC
+                    hailo_logger.info("Calibration cancelled")
+                    print("\n❌ Cancelled\n")
+                    break
+
+                elif key == 32 or key == ord("c") or key == ord("C"):  # SPACE or 'c'
+                    camera_image = frame.copy()
+                    hailo_logger.info("Image captured")
+                    print("\n✓ Image captured\n")
+                    capture_successful = True
+                    break
+
+            cap.release()
+            cv2.destroyAllWindows()
+
+            if not capture_successful:
+                print("❌ Image capture failed or cancelled")
+                continue  # Try next attempt
+
+            # Detect checkerboard corners
+            hailo_logger.info("Detecting corners in camera image...")
+            print("🔍 Detecting checkerboard corners...")
+
+            # Create debug directory for this attempt
+            debug_dir = history_dir / f"attempt_{attempt + 1}"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+
+            camera_centers = detect_checkerboard_corners(
+                camera_image,
+                rows=self.pattern_rows,
+                cols=self.pattern_cols,
+                refine=True,
+                debug_dir=str(debug_dir),
+            )
+
+            if camera_centers is None:
+                hailo_logger.error("No checkerboard detected")
+                print("\n❌ No checkerboard detected!")
+                print(f"   Debug images saved to: {debug_dir}")
+                continue  # Try next attempt
+
+            # Debug: Log corner positions
+            hailo_logger.info(f"Camera corners shape: {camera_centers.shape}")
+            hailo_logger.info(f"First 3 camera corners: {camera_centers[:3]}")
+            hailo_logger.info(f"Projector corners shape: {projector_centers.shape}")
+            hailo_logger.info(f"First 3 projector corners: {projector_centers[:3]}")
+
+            detected_count = len(camera_centers)
+            print(f"   Detected: {detected_count} corners")
+
+            # Check if we have enough points
+            if detected_count < min_required_points:
+                hailo_logger.error(f"Insufficient points: {detected_count} < {min_required_points}")
+                print(f"❌ Not enough points detected!")
+                print(f"   Need at least {min_required_points} points")
+                print(f"   Found {detected_count} points")
+                print(f"   Debug images saved to: {debug_dir}")
+                continue  # Try next attempt
+
+            # Warn if significantly fewer than expected
+            if detected_count < expected_points * 0.9:
+                print(f"⚠️  Warning: Only {detected_count}/{expected_points} points detected")
+            else:
+                print(f"✅ Good detection: {detected_count}/{expected_points} points")
+
+            # Match point counts
+            min_points = min(len(camera_centers), len(projector_centers))
+            if len(camera_centers) != len(projector_centers):
+                print(f"⚠️  Using {min_points} points for calibration")
+                camera_centers = camera_centers[:min_points]
+                projector_centers = projector_centers[:min_points]
+            else:
+                print(f"✅ Using all {len(camera_centers)} points")
+
+            # Calculate homography matrix
+            print("\n🧮 Calculating homography matrix...")
+            hailo_logger.info("Calculating homography...")
+
+            try:
+                # Calculate homography matrix - use OpenCV result directly
+                # If axes are inverted, it's likely due to projector display flip settings
+                # The homography matrix will naturally compensate for this
+                homography_matrix, mask = cv2.findHomography(
+                    camera_centers, projector_centers, cv2.RANSAC, 5.0
+                )
+            except (cv2.error, ValueError, TypeError) as e:
+                hailo_logger.error("Homography calculation failed: %s", e)
+                print(f"❌ Failed to calculate homography: {e}")
+                continue  # Try next attempt
+
+            if homography_matrix is None:
+                hailo_logger.error("Homography is None")
+                print("❌ Could not calculate homography")
+                continue  # Try next attempt
+
+            # Validate the transformation
+            scale_x = homography_matrix[0, 0]
+            scale_y = homography_matrix[1, 1]
+            print(f"   Scale factors: X={scale_x:.3f}, Y={scale_y:.3f}")
+
+            # Test the transformation quality
+            test_points = [
+                ("Center", (640, 360)),
+                ("Right", (720, 360)),
+                ("Left", (560, 360)),
+                ("Up", (640, 300)),
+                ("Down", (640, 420)),
+            ]
+
+            print("   Direction test:")
+            for name, (cx, cy) in test_points:
+                cam_pt = np.array([[[cx, cy]]], dtype=np.float32)
+                proj_pt = cv2.perspectiveTransform(cam_pt, homography_matrix)
+                px, py = proj_pt[0][0]
+                within_bounds = 0 <= px < self.projector_resolution[0] and 0 <= py < self.projector_resolution[1]
+                status = "✓" if within_bounds else "✗ OUT OF BOUNDS"
+                print(f"     {name}: camera({cx},{cy}) -> projector({px:.1f},{py:.1f}) {status}")
+
+            if abs(scale_x) > 3.0 or abs(scale_y) > 3.0:
+                print("⚠️  Warning: Very large scale factors detected")
+            elif scale_x < -1.5 or scale_y < -1.5:
+                print("⚠️  Warning: Large negative scales (possible flip)")
+
+            # Calculate quality metrics
+            inliers = np.sum(mask)
+            inlier_ratio = inliers / len(mask) * 100
+            hailo_logger.info(
+                "Homography: %d/%d inliers (%.1f%%)", inliers, len(mask), inlier_ratio
+            )
+
+            print("✅ Homography calculated")
+            print(f"   Inliers: {inliers}/{len(mask)} ({inlier_ratio:.1f}%)")
+
+            # Quality check
+            if inlier_ratio < 70:
+                print(f"⚠️  Warning: Low quality ({inlier_ratio:.1f}%)")
+                print("   This calibration may not be accurate enough")
+                continue  # Try next attempt
+            elif inlier_ratio < 90:
+                print(f"✓ Acceptable quality ({inlier_ratio:.1f}%)")
+            else:
+                print(f"✓ Excellent quality ({inlier_ratio:.1f}%)")
+
+            # Save homography matrix to history
+            history_file = history_dir / f"homography_attempt_{attempt + 1}.npy"
+            np.save(history_file, homography_matrix)
+            hailo_logger.info(f"Saved homography to history: {history_file}")
+
+            # Save transformation test results
+            test_log_file = history_dir / f"transformation_test_{attempt + 1}.txt"
+            with open(test_log_file, 'w') as f:
+                f.write("Transformation Test Results\n")
+                f.write("=" * 50 + "\n\n")
+                f.write(f"Homography:\n{homography_matrix}\n\n")
+                f.write("Test Points (camera -> projector):\n")
+                for name, (cx, cy) in test_points:
+                    cam_pt = np.array([[[cx, cy]]], dtype=np.float32)
+                    proj_pt = cv2.perspectiveTransform(cam_pt, homography_matrix)
+                    px, py = proj_pt[0][0]
+                    within_bounds = 0 <= px < self.projector_resolution[0] and 0 <= py < self.projector_resolution[1]
+                    f.write(f"{name}: ({cx},{cy}) -> ({px:.1f},{py:.1f}) "
+                           f"{'✓' if within_bounds else '✗ OUT OF BOUNDS'}\n")
+            hailo_logger.info(f"Saved transformation test to: {test_log_file}")
+
+            # Visualize result
+            self._visualize_detected_points(camera_image, camera_centers, "Calibration Result")
+            print("\n✓ Calibration attempt successful!")
+            print("   Press any key to continue to validation...")
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+
+            # Run validation if requested
+            if auto_validate:
+                print(f"\n{'='*70}")
+                print("VALIDATION TEST")
+                print(f"{'='*70}")
+                print("🔍 Testing calibration quality...")
+                print()
+                print("WHAT TO LOOK FOR:")
+                print("• Red circle = camera center (on camera feed)")
+                print("• Green circle = projector mapping (on projector screen)")
+                print("• The green circle should align with the red circle")
+                print("• Move around to test different positions")
+                print()
+                print("CONTROLS:")
+                print("• SPACE = Accept this calibration (good alignment)")
+                print("• ESC = Reject and try again (poor alignment)")
+                print("• Q = Cancel calibration process")
+                print("="*70)
+
+                validation_result = self._run_validation_interactive(homography_matrix, camera_source)
+
+                if validation_result == "accept":
+                    print("\n✅ Calibration accepted!")
+                    # Save final homography matrix
+                    if output_path:
+                        np.save(output_path, homography_matrix)
+                        hailo_logger.info(f"Saved final calibration to {output_path}")
+                        print(f"✓ Calibration saved to {output_path}")
+
+                    # Save final result to history
+                    final_file = history_dir / "final_homography.npy"
+                    np.save(final_file, homography_matrix)
+                    hailo_logger.info(f"Saved final homography to history: {final_file}")
+
+                    return homography_matrix
+                elif validation_result == "reject":
+                    print("\n❌ Calibration rejected, trying again...")
+                    continue  # Try next attempt
+                else:  # cancelled
+                    print("\n❌ Calibration cancelled by user")
+                    return None
+            else:
+                # No validation, accept this calibration
+                if output_path:
+                    np.save(output_path, homography_matrix)
+                    hailo_logger.info(f"Saved to {output_path}")
+                    print(f"\n✓ Calibration successful! Saved to {output_path}\n")
+
+                return homography_matrix
+
+        # If we get here, all attempts failed
+        print(f"\n❌ All {max_retries} calibration attempts failed!")
+        print(f"   History saved to: {history_dir}")
+        return None
+
+    def _run_validation_interactive(
+        self, homography_matrix: np.ndarray, camera_source: str = "/dev/video0"
+    ) -> str:
+        """
+        Run interactive validation of calibration.
+
+        Args:
+            homography_matrix (np.ndarray): Homography matrix to validate.
+            camera_source (str): Camera device path.
+
+        Returns:
+            str: "accept", "reject", or "cancel"
+        """
+        hailo_logger.info("Starting interactive validation")
+
+        # Open camera (handle both device paths and numeric indices)
+        camera_source_parsed = (
+            int(camera_source) if camera_source.isdigit() else camera_source
         )
-
-        # Open camera
-        hailo_logger.info(f"Opening camera {camera_source}")
-        # Try to parse as integer first (for compatibility with device indices)
-        try:
-            camera_source_parsed = int(camera_source)
-        except (ValueError, TypeError):
-            camera_source_parsed = camera_source
 
         cap = cv2.VideoCapture(camera_source_parsed)
         if not cap.isOpened():
             hailo_logger.error(f"Failed to open camera {camera_source}")
-            return None
+            print(f"❌ Failed to open camera {camera_source}")
+            return "cancel"
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_resolution[0])
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_resolution[1])
 
-        # Create fullscreen window for projector
-        window_name = "Calibration Pattern - Projector"
+        # Create fullscreen window
+        window_name = "Validation"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
         cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        # Move to projector display (HDMI-1 at position 0,0)
+        cv2.moveWindow(window_name, 0, 0)
 
-        # Move window to projector display (if multiple displays)
-        # Note: This is system-dependent; may need manual positioning
-        cv2.moveWindow(window_name, self.projector_resolution[0], 0)
+        validation_window = "Camera - Press SPACE to accept, ESC to reject"
+        cv2.namedWindow(validation_window, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(validation_window, 640, 480)
 
-        # Display pattern
-        cv2.imshow(window_name, pattern)
-        cv2.waitKey(100)  # Give time for window to render
-
-        hailo_logger.info("Calibration pattern displayed. Capturing camera image...")
-        print("\n" + "="*70)
-        print("CALIBRATION INSTRUCTIONS:")
-        print("="*70)
-        print("1. Calibration pattern is displayed on projector")
-        print("2. Camera feed window will show below")
-        print("3. Click on the camera feed window to ensure it has focus")
-        print("4. Press SPACE to capture (or 'c' if SPACE doesn't work)")
-        print("5. Press ESC to cancel (or 'q' to quit)")
-        print("="*70)
-        print("\n⏳ Waiting for camera to initialize...")
-
-        # Wait for user input
-        camera_image = None
-        camera_feed_window = "Camera Feed - Press SPACE to capture, ESC to cancel"
-
-        # Create window and make it visible
-        cv2.namedWindow(camera_feed_window, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(camera_feed_window, 640, 480)
-
-        # Give windows time to initialize
         time.sleep(0.5)
 
-        frame_count = 0
-        print("\n✓ Camera ready! Showing live feed...")
-        print("👉 Click on the camera window and press SPACE to capture\n")
+        print("🔍 Enhanced Validation Mode")
+        print("="*70)
+        print("CONTROLS:")
+        print("• WASD = Move test point (W=Up, S=Down, A=Left, D=Right)")
+        print("• ARROW KEYS = Alternative movement (may have issues on some systems)")
+        print("• + / - = Adjust movement speed")
+        print("• SPACE = Accept this calibration")
+        print("• ESC = Reject and retry")
+        print("• Q = Cancel calibration")
+        print("="*70)
+        print("\nVISUALIZATION:")
+        print("• Red circle on camera = interactive test point")
+        print("• Cyan dots on camera = reference points")
+        print("• Green circle on projector = transformed interactive point")
+        print("• Yellow dots on projector = transformed reference points")
+        print("• Check if green circle aligns with red circle on projector")
+        print("="*70)
+        print("\nNOTE:")
+        print("• Use WASD for most reliable movement")
+        print("• Move speed starts at 10px, adjust with +/-")
+        print("• Watch console for movement feedback")
+        print("="*70)
+
+        # Test with a simple grid of points to verify transformation
+        print("\n   Testing transformation with test points...")
+        test_points = [(320, 180), (640, 360), (960, 540)]  # Left, center, right
+        for tx, ty in test_points:
+            test_pt = np.array([[[tx, ty]]], dtype=np.float32)
+            result = cv2.perspectiveTransform(test_pt, homography_matrix)
+            rx, ry = result[0][0]
+            hailo_logger.info(f"Test point ({tx},{ty}) -> ({rx:.1f},{ry:.1f})")
+            print(f"   Test: camera({tx},{ty}) -> projector({rx:.1f},{ry:.1f})")
+
+        # Track current test point position
+        test_point_x = self.camera_resolution[0] // 2  # Start at center
+        test_point_y = self.camera_resolution[1] // 2
+        move_speed = 10  # Pixels per keypress
 
         while True:
             ret, frame = cap.read()
             if not ret:
-                hailo_logger.error("Failed to read from camera")
-                cap.release()
-                cv2.destroyAllWindows()
-                return None
+                break
 
-            frame_count += 1
+            # Create projection frame
+            projection = np.zeros(
+                (self.projector_resolution[1], self.projector_resolution[0], 3),
+                dtype=np.uint8,
+            )
 
-            # Add instructions overlay on frame
+            # Show multiple test points for visual reference
+            cam_h, cam_w = frame.shape[:2]
+
+            # Fixed reference points (corners and center)
+            reference_points = [
+                (cam_w // 4, cam_h // 4),      # Top-left
+                (3*cam_w // 4, cam_h // 4),     # Top-right
+                (cam_w // 2, cam_h // 2),       # Center
+                (cam_w // 4, 3*cam_h // 4),     # Bottom-left
+                (3*cam_w // 4, 3*cam_h // 4),   # Bottom-right
+            ]
+
+            # Draw all reference points on camera frame
             display_frame = frame.copy()
 
-            # Add semi-transparent overlay at top
+            for i, (cx, cy) in enumerate(reference_points):
+                # Transform to projector space
+                cam_pt = np.array([[[cx, cy]]], dtype=np.float32)
+                proj_pt = cv2.perspectiveTransform(cam_pt, homography_matrix)
+                px, py = proj_pt[0][0]
+
+                # Invert Y-axis if needed (check if moving up moves projection down)
+                # This indicates Y-axis is flipped
+
+                # Draw on camera frame (small reference dots)
+                cv2.circle(display_frame, (cx, cy), 4, (0, 255, 255), -1)  # Cyan dots
+
+                # Draw on projection if within bounds
+                if 0 <= px < self.projector_resolution[0] and 0 <= py < self.projector_resolution[1]:
+                    cv2.circle(projection, (int(px), int(py)), 4, (255, 255, 0), -1)  # Yellow dots
+
+            # Draw the interactive test point (large and prominent)
+            # Transform current test point
+            cam_pt = np.array([[[test_point_x, test_point_y]]], dtype=np.float32)
+            proj_pt = cv2.perspectiveTransform(cam_pt, homography_matrix)
+            proj_x, proj_y = proj_pt[0][0]
+
+            # Draw on camera frame (large, red)
+            cv2.circle(display_frame, (test_point_x, test_point_y), 12, (0, 0, 255), -1)  # Red
+            cv2.circle(display_frame, (test_point_x, test_point_y), 16, (255, 255, 255), 2)  # White border
+
+            # Draw on projection if within bounds (large, green)
+            if 0 <= proj_x < self.projector_resolution[0] and 0 <= proj_y < self.projector_resolution[1]:
+                cv2.circle(projection, (int(proj_x), int(proj_y)), 12, (0, 255, 0), -1)  # Green
+                cv2.circle(projection, (int(proj_x), int(proj_y)), 16, (255, 255, 255), 2)  # White border
+
+                # Draw crosshair for alignment reference
+                size = 40
+                cv2.line(projection, (int(proj_x)-size, int(proj_y)), (int(proj_x)+size, int(proj_y)), (200, 200, 200), 2)
+                cv2.line(projection, (int(proj_x), int(proj_y)-size), (int(proj_x), int(proj_y)+size), (200, 200, 200), 2)
+
+            # Add status overlay
             overlay = display_frame.copy()
             cv2.rectangle(overlay, (0, 0), (display_frame.shape[1], 80), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.6, display_frame, 0.4, 0, display_frame)
 
-            # Add text instructions
-            cv2.putText(display_frame, "PRESS SPACE TO CAPTURE", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-            cv2.putText(display_frame, "Press ESC to cancel", (10, 60),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            # Show current position
+            cv2.putText(
+                display_frame,
+                f"Test Point: ({test_point_x},{test_point_y})",
+                (10, 25),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                2,
+            )
 
-            # Show frame number to confirm video is live
-            cv2.putText(display_frame, f"Frame: {frame_count}", (10, display_frame.shape[0] - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+            cv2.putText(
+                display_frame,
+                f"Projection: ({int(proj_x) if 0<=proj_x<self.projector_resolution[0] else 'OUT'},{int(proj_y) if 0<=proj_y<self.projector_resolution[1] else 'OUT'})",
+                (10, 50),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 0),
+                2,
+            )
 
-            # Show camera feed
-            cv2.imshow(camera_feed_window, display_frame)
+            cv2.putText(
+                display_frame,
+                "ARROWS=Move | SPACE=Accept | ESC=Reject | Q=Cancel",
+                (10, 75),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),
+                1,
+            )
 
-            # Try to keep window on top (may not work on all systems)
-            try:
-                cv2.setWindowProperty(camera_feed_window, cv2.WND_PROP_TOPMOST, 1)
-            except:
-                pass  # Some systems don't support this
+            cv2.imshow(validation_window, display_frame)
+            cv2.imshow(window_name, projection)
 
-            # Use longer wait and check multiple key codes
-            key = cv2.waitKey(50) & 0xFF
+            # Enhanced key handling with arrow keys
+            # Use longer timeout to ensure arrow keys are detected
+            key = cv2.waitKey(100) & 0xFF
 
-            # Log key presses for debugging
-            if key != 255:
-                hailo_logger.info(f"Key detected: {key} (chr: '{chr(key) if 32 <= key < 127 else '?'}')")
-                print(f"   Key detected: {key}")
+            # Debug: print key codes for troubleshooting
+            if key != 255:  # 255 means no key pressed
+                hailo_logger.debug(f"Key pressed: {key}")
 
-            # Check for ESC or 'q'
-            if key == 27 or key == ord('q') or key == ord('Q'):
-                hailo_logger.info("Calibration cancelled by user")
-                print("\n❌ Calibration cancelled\n")
+            # Check for special keys (arrows, +, -)
+            # Note: WASD works reliably, arrow keys have system-dependent issues
+            # User reports right arrow sometimes detected as down (84)
+            if key == ord('w') or key == ord('W') or key == 82:  # W or Up arrow
+                test_point_y = max(0, test_point_y - move_speed)
+                print(f"Moved UP to ({test_point_x}, {test_point_y})")
+            elif key == ord('s') or key == ord('S') or key == 84:  # S or Down arrow
+                test_point_y = min(cam_h - 1, test_point_y + move_speed)
+                print(f"Moved DOWN to ({test_point_x}, {test_point_y})")
+            elif key == ord('a') or key == ord('A') or key == 81:  # A or Left arrow
+                test_point_x = max(0, test_point_x - move_speed)
+                print(f"Moved LEFT to ({test_point_x}, {test_point_y})")
+            elif key == ord('d') or key == ord('D') or key == 83:  # D or Right arrow
+                test_point_x = min(cam_w - 1, test_point_x + move_speed)
+                print(f"Moved RIGHT to ({test_point_x}, {test_point_y})")
+            # Note: Some systems detect right arrow as multiple codes
+            # Using WASD as primary method for reliability
+            elif key == ord('+') or key == ord('='):  # Increase speed
+                move_speed = min(50, move_speed + 5)
+                print(f"Move speed: {move_speed}px")
+            elif key == ord('-') or key == ord('_'):  # Decrease speed
+                move_speed = max(1, move_speed - 5)
+                print(f"Move speed: {move_speed}px")
+            elif key == 32:  # SPACE
+                print("\n✅ Calibration accepted!")
                 cap.release()
                 cv2.destroyAllWindows()
-                return None
-
-            # Check for SPACE or 'c' (capture)
-            elif key == 32 or key == ord('c') or key == ord('C'):
-                camera_image = frame.copy()
-                hailo_logger.info("Camera image captured")
-                print("\n✓ Image captured!\n")
-                break
+                return "accept"
+            elif key == 27:  # ESC
+                print("\n❌ Calibration rejected!")
+                cap.release()
+                cv2.destroyAllWindows()
+                return "reject"
+            elif key == ord("q") or key == ord("Q"):  # Q
+                print("\n❌ Calibration cancelled!")
+                cap.release()
+                cv2.destroyAllWindows()
+                return "cancel"
 
         cap.release()
-
-        # Detect circles in camera image
-        expected_count = self.pattern_rows * self.pattern_cols
-        hailo_logger.info(f"Detecting circles in camera image (expecting {expected_count})...")
-        print(f"\n🔍 Detecting calibration points...")
-        print(f"   Expected: {expected_count} circles")
-
-        camera_centers = detect_circle_centers(
-            camera_image,
-            expected_count=expected_count,
-            min_radius=self.circle_radius // 2,
-            max_radius=self.circle_radius * 2,
-        )
-
-        if camera_centers is None:
-            hailo_logger.error("Failed to detect any circles in camera image")
-            print(f"❌ No circles detected!")
-            print(f"   Check:")
-            print(f"   • Camera focus and exposure")
-            print(f"   • Pattern visibility and lighting")
-            print(f"   • Projector brightness")
-            cv2.destroyAllWindows()
-            return None
-
-        detected_count = len(camera_centers)
-        print(f"   Detected: {detected_count} circles")
-
-        # Check if we have enough points
-        if detected_count < min_required_points:
-            hailo_logger.error(
-                f"Insufficient points detected: {detected_count} < {min_required_points}"
-            )
-            print(f"❌ Not enough points detected!")
-            print(f"   Need at least {min_required_points} points")
-            print(f"   Only found {detected_count} points")
-            print(f"   Missing {min_required_points - detected_count} points")
-
-            # Show visualization and allow adjustment
-            return self._handle_insufficient_points(
-                camera_image,
-                camera_centers,
-                camera_source,
-                min_required_points,
-                output_path
-            )
-
-        # Warn if significantly fewer than expected
-        if detected_count < expected_count * 0.8:
-            print(f"⚠️  Warning: Only {detected_count}/{expected_count} circles detected")
-            print(f"   ({detected_count/expected_count*100:.1f}% of expected)")
-        else:
-            print(f"✅ Good detection: {detected_count}/{expected_count} circles")
-            print(f"   ({detected_count/expected_count*100:.1f}% of expected)")
-
-        # Sort camera centers to match projector pattern order
-        hailo_logger.info("Sorting detected circle centers...")
-        camera_centers = sort_circle_centers(
-            camera_centers, self.pattern_rows, self.pattern_cols
-        )
-
-        # Ensure we have matching number of points
-        if len(camera_centers) != len(projector_centers):
-            hailo_logger.warning(
-                f"Point count mismatch: camera={len(camera_centers)}, "
-                f"projector={len(projector_centers)}"
-            )
-            # Use the minimum number of points
-            min_points = min(len(camera_centers), len(projector_centers))
-            print(f"⚠️  Using {min_points} points for calibration")
-            camera_centers = camera_centers[:min_points]
-            projector_centers = projector_centers[:min_points]
-        else:
-            print(f"✅ Using {len(camera_centers)} matched points for calibration")
-
-        # Calculate homography matrix
-        print(f"\n🧮 Calculating homography matrix...")
-        hailo_logger.info("Calculating homography matrix...")
-
-        try:
-            homography_matrix, mask = cv2.findHomography(
-                camera_centers, projector_centers, cv2.RANSAC, 5.0
-            )
-        except Exception as e:
-            hailo_logger.error(f"Failed to calculate homography: {e}")
-            print(f"❌ Homography calculation failed: {e}")
-            cv2.destroyAllWindows()
-            return None
-
-        if homography_matrix is None:
-            hailo_logger.error("Failed to calculate homography matrix")
-            print(f"❌ Could not calculate homography matrix")
-            print(f"   Points may be collinear or invalid")
-            cv2.destroyAllWindows()
-            return None
-
-        # Calculate reprojection error
-        inliers = np.sum(mask)
-        inlier_ratio = inliers / len(mask) * 100
-        hailo_logger.info(f"Homography calculated with {inliers}/{len(mask)} inliers")
-
-        print(f"✅ Homography matrix calculated")
-        print(f"   Inliers: {inliers}/{len(mask)} ({inlier_ratio:.1f}%)")
-
-        # Quality check
-        if inlier_ratio < 70:
-            print(f"⚠️  Warning: Low inlier ratio ({inlier_ratio:.1f}%)")
-            print(f"   Calibration may be inaccurate")
-        elif inlier_ratio < 90:
-            print(f"✓ Acceptable quality ({inlier_ratio:.1f}%)")
-        else:
-            print(f"✓ Excellent quality ({inlier_ratio:.1f}%)")
-
-        # Visualize detected points
-        vis_image = camera_image.copy()
-        for i, center in enumerate(camera_centers):
-            cv2.circle(vis_image, tuple(center.astype(int)), 5, (0, 255, 0), -1)
-            if i < 10:  # Label first few points
-                cv2.putText(
-                    vis_image,
-                    str(i),
-                    tuple(center.astype(int)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (255, 0, 0),
-                    1,
-                )
-
-        cv2.imshow("Detected Centers", vis_image)
-        hailo_logger.info("Press any key to continue...")
-        cv2.waitKey(0)
         cv2.destroyAllWindows()
-
-        # Save homography matrix
-        if output_path:
-            np.save(output_path, homography_matrix)
-            hailo_logger.info(f"Homography matrix saved to {output_path}")
-            print(f"\n✓ Calibration successful! Matrix saved to {output_path}\n")
-
-        return homography_matrix
+        return "cancel"
 
     def validate_calibration(
         self, homography_matrix: np.ndarray, camera_source: str = "/dev/video0"
@@ -649,16 +727,14 @@ class CalibrationTool:
 
         Args:
             homography_matrix (np.ndarray): Homography matrix to validate.
-            camera_source (str): Camera device path or video file.
+            camera_source (str): Camera device path.
         """
-        hailo_logger.info("Starting calibration validation")
+        hailo_logger.info("Starting validation")
 
-        # Open camera
-        # Try to parse as integer first (for compatibility with device indices)
-        try:
-            camera_source_parsed = int(camera_source)
-        except (ValueError, TypeError):
-            camera_source_parsed = camera_source
+        # Open camera (handle both device paths and numeric indices)
+        camera_source_parsed = (
+            int(camera_source) if camera_source.isdigit() else camera_source
+        )
 
         cap = cv2.VideoCapture(camera_source_parsed)
         if not cap.isOpened():
@@ -668,37 +744,32 @@ class CalibrationTool:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_resolution[0])
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_resolution[1])
 
-        # Create fullscreen window for projector
-        window_name = "Validation - Projector"
+        # Create fullscreen window
+        window_name = "Validation"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
         cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        cv2.moveWindow(window_name, self.projector_resolution[0], 0)
+        # Move to projector display (HDMI-1 at position 0,0)
+        cv2.moveWindow(window_name, 0, 0)
 
-        print("\n" + "=" * 70)
-        print("VALIDATION MODE:")
+        print("\n" + "="*70)
+        print("VALIDATION MODE")
         print("="*70)
-        print("Move your hand in the camera view.")
-        print("A green circle should appear on the projector at the same location.")
-        print("Press ESC to exit (or 'q' to quit).")
+        print("Testing homography matrix transformation.")
+        print("Red circle shows camera center, green circle shows projector mapping.")
+        print("Press ESC to exit.")
         print("="*70)
-        print("\n⏳ Starting validation...")
+        print()
 
-        validation_camera_window = "Camera Feed - Validation (Press ESC to exit)"
-        cv2.namedWindow(validation_camera_window, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(validation_camera_window, 640, 480)
+        validation_window = "Camera - Press ESC to exit"
+        cv2.namedWindow(validation_window, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(validation_window, 640, 480)
 
-        # Give windows time to initialize
         time.sleep(0.5)
-
-        frame_count = 0
-        print("✓ Validation active! Move your hand to test alignment.\n")
 
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
-
-            frame_count += 1
 
             # Create projection frame
             projection = np.zeros(
@@ -706,113 +777,47 @@ class CalibrationTool:
                 dtype=np.uint8,
             )
 
-            # Get frame center as test point
+            # Transform frame center to projector space
             cam_h, cam_w = frame.shape[:2]
             test_point_cam = np.array([[[cam_w // 2, cam_h // 2]]], dtype=np.float32)
-
-            # Transform to projector space
             test_point_proj = cv2.perspectiveTransform(test_point_cam, homography_matrix)
             proj_x, proj_y = test_point_proj[0][0].astype(int)
 
-            # Draw circle on projection at transformed point
-            if 0 <= proj_x < self.projector_resolution[0] and 0 <= proj_y < self.projector_resolution[1]:
+            # Draw circle on projection
+            if (
+                0 <= proj_x < self.projector_resolution[0]
+                and 0 <= proj_y < self.projector_resolution[1]
+            ):
                 cv2.circle(projection, (proj_x, proj_y), 50, (0, 255, 0), -1)
 
-            # Show camera feed with center point and instructions
+            # Show camera feed
             display_frame = frame.copy()
-
-            # Draw center point
             cv2.circle(display_frame, (cam_w // 2, cam_h // 2), 10, (0, 0, 255), -1)
             cv2.circle(display_frame, (cam_w // 2, cam_h // 2), 15, (255, 255, 255), 2)
 
-            # Add overlay with instructions
+            # Add overlay
             overlay = display_frame.copy()
             cv2.rectangle(overlay, (0, 0), (display_frame.shape[1], 60), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.6, display_frame, 0.4, 0, display_frame)
 
-            cv2.putText(display_frame, "VALIDATION MODE - Press ESC to exit", (10, 25),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            cv2.putText(display_frame, "Red dot should align with green circle on projector", (10, 50),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(
+                display_frame,
+                "VALIDATION - Press ESC to exit",
+                (10, 25),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 0),
+                2,
+            )
 
-            # Show frame count
-            cv2.putText(display_frame, f"Frame: {frame_count}", (10, display_frame.shape[0] - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-
-            cv2.imshow(validation_camera_window, display_frame)
+            cv2.imshow(validation_window, display_frame)
             cv2.imshow(window_name, projection)
 
-            # Try to keep window on top for key input
-            try:
-                cv2.setWindowProperty(validation_camera_window, cv2.WND_PROP_TOPMOST, 1)
-            except:
-                pass
-
             key = cv2.waitKey(50) & 0xFF
-
-            # Log key presses
-            if key != 255:
-                hailo_logger.info(f"Key detected in validation: {key}")
-                print(f"   Key detected: {key}")
-
-            # Check for ESC or 'q'
-            if key == 27 or key == ord('q') or key == ord('Q'):
-                hailo_logger.info("Validation ended by user")
+            if key == 27 or key == ord("q") or key == ord("Q"):  # ESC
                 print("\n✓ Validation ended\n")
                 break
 
         cap.release()
         cv2.destroyAllWindows()
         hailo_logger.info("Validation complete")
-
-
-def main():
-    """Main entry point for calibration tool."""
-    parser = argparse.ArgumentParser(description="Freezing Phantoms Calibration Tool")
-    parser.add_argument(
-        "--config",
-        type=Path,
-        default=Path(__file__).parent.parent / "config" / "game_config.yaml",
-        help="Path to game configuration file",
-    )
-    parser.add_argument(
-        "--video-source",
-        type=str,
-        default="/dev/video0",
-        help="Video source (camera device path or video file)",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path(__file__).parent.parent / "config" / "calibration.npy",
-        help="Output path for calibration matrix",
-    )
-    parser.add_argument(
-        "--validate",
-        action="store_true",
-        help="Run validation mode (requires existing calibration)",
-    )
-
-    args = parser.parse_args()
-
-    tool = CalibrationTool(args.config)
-
-    if args.validate:
-        # Load existing calibration
-        if not args.output.exists():
-            print(f"Error: Calibration file not found at {args.output}")
-            sys.exit(1)
-
-        homography = np.load(args.output)
-        tool.validate_calibration(homography, args.video_source)
-    else:
-        # Run calibration
-        homography = tool.run_calibration(args.video_source, args.output)
-        if homography is None:
-            print("Calibration failed!")
-            sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
-
