@@ -104,14 +104,14 @@ class GameStateMachine:
         self.total_penalties = 0
         self.movement_penalties = 0
         self.lava_penalties = 0
-        
+
         # Lives system (hearts)
         self.starting_hearts = config.get("lives", {}).get("starting_hearts", 3)
         self.current_hearts = self.starting_hearts
         self.lose_heart_on_movement = config.get("lives", {}).get("lose_heart_on_movement", True)
         self.lose_heart_on_lava = config.get("lives", {}).get("lose_heart_on_lava", False)
 
-        hailo_logger.info("Game state machine initialized in %s with %d hearts", 
+        hailo_logger.info("Game state machine initialized in %s with %d hearts",
                          self.current_state.value, self.current_hearts)
 
     def update(self, dt: float, player_data: Optional[Dict]) -> None:  # noqa: ARG002
@@ -167,7 +167,21 @@ class GameStateMachine:
         elif current == GameState.TRANSITION:
             # Transition -> Red Light after flashing completes
             self._change_state(GameState.RED_LIGHT)
-            self._set_random_duration("red_light_duration")
+
+            # Set red light duration that scales with progress (gets longer each stage)
+            duration_range = self.config["game"]["red_light_duration"]
+            base_duration = random.uniform(duration_range[0], duration_range[1])
+
+            # Scale duration based on current row (0-4 rows = 0-1.0 multiplier)
+            if self.tile_grid:
+                progress_multiplier = 1.0 + (self.tile_grid.player_row / 4.0)  # 1.0x at row 0, 2.0x at row 4
+                self.state_duration = base_duration * progress_multiplier
+                hailo_logger.debug(
+                    "Red light duration: %.1fs (base: %.1fs, row: %d, multiplier: %.2fx)",
+                    self.state_duration, base_duration, self.tile_grid.player_row, progress_multiplier
+                )
+            else:
+                self.state_duration = base_duration
 
             # Reset flash counter
             self.flash_count = 0
@@ -234,7 +248,7 @@ class GameStateMachine:
         self.current_state = new_state
         self.state_start_time = time.time()
 
-        hailo_logger.info("State transition: %s -> %s", old_state.value, new_state.value)
+        hailo_logger.debug("State transition: %s -> %s", old_state.value, new_state.value)
 
         # Trigger audio callback
         if self.audio_callback:
@@ -269,23 +283,23 @@ class GameStateMachine:
             self.caught_players.append(track_id)
             self.movement_penalties += 1
             self.total_penalties += 1
-            
+
             # Lose a heart if configured
             if self.lose_heart_on_movement and self.current_hearts > 0:
                 self.current_hearts -= 1
-                hailo_logger.warning("Player %d caught! Lost heart. Hearts remaining: %d", 
+                hailo_logger.warning("Player %d caught! Lost heart. Hearts remaining: %d",
                                     track_id, self.current_hearts)
-                
+
                 # Check for game over
                 if self.current_hearts <= 0:
                     hailo_logger.error("Player %d ran out of hearts! GAME OVER", track_id)
                     self._change_state(GameState.GAME_OVER)
                     self.state_duration = float("inf")
                     return
-            
+
             # Don't move player back - just lose heart and continue
             hailo_logger.info("Player lost heart but stays at current position")
-            
+
             # Immediately end red light and transition to penalty display
             self._change_state(GameState.PENALTY)
             self.state_duration = self.config["game"]["penalty_duration"]
@@ -472,7 +486,7 @@ class GameStateMachine:
         self.total_penalties = 0
         self.movement_penalties = 0
         self.lava_penalties = 0
-        
+
         # Reset hearts
         self.current_hearts = self.starting_hearts
 
@@ -482,7 +496,7 @@ class GameStateMachine:
             self.player_current_row = self.tile_grid.player_row
 
         hailo_logger.info("Game state machine reset with %d hearts", self.current_hearts)
-    
+
     def force_start_green_light(self) -> None:
         """Force start green light phase (called when player is on start square)."""
         self._change_state(GameState.GREEN_LIGHT)

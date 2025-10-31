@@ -106,13 +106,12 @@ class FreezingPhantomsGame:
         # Initialize movement detector (before renderer, since renderer uses it)
         movement_config = self.config.get("movement", {})
         self.movement_detector = MovementDetector(
-            velocity_threshold=movement_config.get("velocity_threshold", 120.0),
+            displacement_threshold=movement_config.get("displacement_threshold", 50.0),
             monitored_keypoints=movement_config.get("monitored_keypoints"),
-            position_smoothing_alpha=movement_config.get("position_smoothing_alpha", 0.2),
-            velocity_window_duration=movement_config.get("velocity_window_duration", 0.3),
-            min_consecutive_frames=movement_config.get("min_consecutive_frames", 2),
-            keypoint_confidence_threshold=movement_config.get("keypoint_confidence_threshold", 0.5),
-            fps=movement_config.get("fps", 30.0),
+            smoothing_alpha=movement_config.get("smoothing_alpha", 0.3),
+            min_consecutive_frames=movement_config.get("min_consecutive_frames", 3),
+            keypoint_confidence_threshold=movement_config.get("keypoint_confidence_threshold", 0.3),
+            bootstrap_duration=movement_config.get("bootstrap_duration", 1.0),
         )
 
         # Initialize projection renderer with tile grid
@@ -265,8 +264,32 @@ class FreezingPhantomsGame:
                                              len(player_data.get('players', [])),
                                              len(all_player_data.get('players', [])))
 
+                # Track previous state to detect transitions
+                previous_state = self.game_state.current_state
+
                 # Update game state
                 self.game_state.update(dt, player_data)
+
+                # When transitioning to RED_LIGHT, set reference poses for movement detection
+                if (previous_state != GameState.RED_LIGHT and
+                    self.game_state.current_state == GameState.RED_LIGHT and
+                    player_data and "players" in player_data):
+                    for player in player_data["players"]:
+                        self.movement_detector.set_reference_pose(player.track_id)
+                    hailo_logger.info("Set reference poses for %d players at RED_LIGHT start",
+                                    len(player_data["players"]))
+
+                # When transitioning away from RED_LIGHT, print freeze period summary
+                if (previous_state == GameState.RED_LIGHT and
+                    self.game_state.current_state != GameState.RED_LIGHT and
+                    player_data and "players" in player_data):
+                    for player in player_data["players"]:
+                        max_disp, keypoint = self.movement_detector.get_freeze_period_summary(player.track_id)
+                        if max_disp > 0:
+                            status = "✅ PASS" if max_disp < self.movement_detector.displacement_threshold else "🚨 FAIL"
+                            print(f"{status} Freeze summary [Player {player.track_id}]: "
+                                  f"Max displacement: {max_disp:.1f}px ({keypoint}) | "
+                                  f"Threshold: {self.movement_detector.displacement_threshold:.1f}px")
 
                 # If in countdown, wait for player to be on start square
                 if self.game_state.current_state == GameState.COUNTDOWN:
@@ -347,27 +370,27 @@ class FreezingPhantomsGame:
                         self.lava_step_start_time.clear()  # Clear lava timers
                         print("\n♻️  Game restarted! Stand on green tile to begin.\n")
 
-                    # Sensitivity controls for freeze detection (velocity-based)
+                    # Sensitivity controls for freeze detection (displacement-based)
                     elif key in ('+', '='):
-                        # Increase sensitivity (lower velocity threshold)
-                        new_threshold = max(50.0, self.movement_detector.velocity_threshold - 20.0)
+                        # Increase sensitivity (lower displacement threshold)
+                        new_threshold = max(20.0, self.movement_detector.displacement_threshold - 10.0)
                         self.movement_detector.set_threshold(new_threshold)
-                        print(f"🔼 Freeze detection MORE sensitive: {new_threshold:.1f} px/s threshold")
+                        print(f"🔼 Freeze detection MORE sensitive: {new_threshold:.1f} px threshold")
                     elif key in ('-', '_'):
-                        # Decrease sensitivity (higher velocity threshold)
-                        new_threshold = min(300.0, self.movement_detector.velocity_threshold + 20.0)
+                        # Decrease sensitivity (higher displacement threshold)
+                        new_threshold = min(300.0, self.movement_detector.displacement_threshold + 10.0)
                         self.movement_detector.set_threshold(new_threshold)
-                        print(f"🔽 Freeze detection LESS sensitive: {new_threshold:.1f} px/s threshold")
+                        print(f"🔽 Freeze detection LESS sensitive: {new_threshold:.1f} px threshold")
                     elif key in ('s', 'S'):
                         # Show current sensitivity settings
-                        stats = self.movement_detector.get_smoothing_stats()
-                        print("\n=== Freeze Detection Settings (Velocity-Based) ===")
-                        print(f"Velocity threshold: {stats['velocity_threshold']:.1f} px/s")
-                        print(f"Position smoothing: {stats['position_smoothing_alpha']:.2f}")
-                        print(f"Velocity window: {stats['velocity_window_duration']:.2f}s")
+                        stats = self.movement_detector.get_stats()
+                        print("\n=== Freeze Detection Settings (Displacement-Based) ===")
+                        print(f"Displacement threshold: {stats['displacement_threshold']:.1f} px")
+                        print(f"Smoothing alpha: {stats['smoothing_alpha']:.2f} (lower = more smoothing)")
                         print(f"Min consecutive frames: {stats['min_consecutive_frames']}")
                         print(f"Keypoint confidence: {stats['keypoint_confidence_threshold']:.2f}")
                         print(f"Active tracks: {stats['active_tracks']}")
+                        print(f"Tracks with reference: {stats['tracks_with_reference']}")
                         print("==================================================\n")
 
                 # Still need cv2.waitKey for window event handling
@@ -530,7 +553,6 @@ class FreezingPhantomsGame:
     def _check_for_movement(self, player_data: dict) -> None:
         """
         Check for player movement during red light phase.
-        Uses velocity-based detection (tracks current velocity, not displacement from frozen pose).
 
         Args:
             player_data (dict): Current player data from pipeline.
@@ -539,19 +561,11 @@ class FreezingPhantomsGame:
             return
 
         current_players = player_data["players"]
+        movement_results = self.movement_detector.detect_player_movement(current_players, debug_log=False)
 
-        # Enable debug logging to see all velocities during RED_LIGHT
-        debug_log = True
-        movement_results = self.movement_detector.detect_player_movement(current_players, debug_log=debug_log)
-
-        for track_id, (moved, velocity, keypoint) in movement_results.items():
+        for track_id, (moved, displacement, keypoint) in movement_results.items():
             if moved:
-                hailo_logger.warning(
-                    "Player %d moved during red light! %s velocity: %.1f px/s",
-                    track_id,
-                    keypoint,
-                    velocity,
-                )
+                print(f"🚨 Player {track_id} moved during RED LIGHT! {keypoint}: {displacement:.1f}px")
                 self.game_state.register_caught_player(track_id)
 
     def cleanup(self) -> None:

@@ -4,7 +4,7 @@
 game:
   countdown_duration: 3.0              # Countdown time before game starts (seconds)
   green_light_duration: [5.0, 8.0]     # Green light duration range (min, max) seconds - NOT USED, ends when player advances
-  red_light_duration: [3.0, 5.0]       # Red light duration range (min, max) seconds
+  red_light_duration: [4.0, 6.0]       # Red light duration range (min, max) seconds - gets longer each stage
   penalty_duration: 2.0                 # Penalty display duration (seconds)
   flash_interval: 0.25                  # Interval between flashes during transition (seconds)
   flash_total: 3                        # Number of flashes before red light
@@ -33,31 +33,31 @@ lava_floor:
   tile_border_color: [50, 50, 50]       # Border color (BGR format)
 
 # Movement detection settings (freeze detection during RED LIGHT)
-# Two-stage process:
+# Displacement-based approach:
 #   1. Position smoothing: EMA filter reduces measurement noise
-#   2. Velocity calculation: Averages velocities between consecutive frames in window
-# Bootstrap: Requires 1 second of data before detecting movement (prevents false triggers)
+#   2. Reference pose: Stores frozen position when red light starts
+#   3. Bootstrap period: Smooths reference for 1 second before detecting
+#   4. Displacement calculation: Measures distance moved from reference
+# Warm-up: Requires 10 frames of smoothing before detecting movement
 movement:
-  velocity_threshold: 120.0             # Velocity threshold in pixels/second (higher = less sensitive)
-                                        # Recommended range: 80-200 px/s
-                                        # - 80 px/s: Very sensitive (catches slow movements)
-                                        # - 120 px/s: Moderate (default, catches deliberate movements)
-                                        # - 150 px/s: Less sensitive (only catches faster movements)
-                                        # - 200 px/s: Very forgiving (only quick movements)
+  displacement_threshold: 50.0          # Displacement threshold in pixels (higher = less sensitive)
+                                        # Recommended range: 20-300 px
+                                        # - 20-30 px: Very sensitive (catches small movements)
+                                        # - 50 px: Moderate (default, catches medium movements)
+                                        # - 100 px: Less sensitive (only significant movements)
+                                        # - 200+ px: Very forgiving (only dramatic movements)
+                                        # Adjustable at runtime with +/- keys
   monitored_keypoints:                  # Body parts monitored for movement
     - left_wrist                        # Left hand
     - right_wrist                       # Right hand
     - left_hip                          # Left hip
     - right_hip                         # Right hip
-  position_smoothing_alpha: 0.2         # Position smoothing (0-1, lower = more smoothing, reduces noise)
+  smoothing_alpha: 0.3                  # Position smoothing (0-1, lower = more smoothing, reduces noise)
                                         # Lower values filter out measurement noise better
-  velocity_window_duration: 0.3         # Time window for averaging velocities (seconds)
-                                        # Calculates velocity between each consecutive frame pair,
-                                        # then averages them over this window
-  min_consecutive_frames: 2             # Consecutive frames above threshold required to trigger
+  min_consecutive_frames: 3             # Consecutive frames above threshold required to trigger
                                         # Higher = fewer false positives, lower = more responsive
-  keypoint_confidence_threshold: 0.5    # Minimum confidence score for keypoints (0-1)
-  fps: 30.0                             # Expected frame rate for velocity calculations
+  keypoint_confidence_threshold: 0.3    # Minimum confidence score for keypoints (0-1)
+  bootstrap_duration: 1.0               # Time to smooth reference pose after freeze starts (seconds)
 
 # Camera configuration
 camera:
