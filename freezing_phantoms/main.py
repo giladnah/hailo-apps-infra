@@ -103,6 +103,18 @@ class FreezingPhantomsGame:
         lava_texture_path = Path(__file__).parent / lava_config.get("texture_path", "lava-floor-2.jpg")
         self.board_effects = BoardEffects(lava_texture_path=str(lava_texture_path))
 
+        # Initialize movement detector (before renderer, since renderer uses it)
+        movement_config = self.config.get("movement", {})
+        self.movement_detector = MovementDetector(
+            velocity_threshold=movement_config.get("velocity_threshold", 120.0),
+            monitored_keypoints=movement_config.get("monitored_keypoints"),
+            position_smoothing_alpha=movement_config.get("position_smoothing_alpha", 0.2),
+            velocity_window_duration=movement_config.get("velocity_window_duration", 0.3),
+            min_consecutive_frames=movement_config.get("min_consecutive_frames", 2),
+            keypoint_confidence_threshold=movement_config.get("keypoint_confidence_threshold", 0.5),
+            fps=movement_config.get("fps", 30.0),
+        )
+
         # Initialize projection renderer with tile grid
         self.renderer = ProjectionRenderer(
             homography_matrix=self.homography_matrix,
@@ -115,18 +127,6 @@ class FreezingPhantomsGame:
 
         # Initialize game state machine
         self.game_state = GameStateMachine(self.config, tile_grid=self.tile_grid)
-
-        # Initialize movement detector
-        movement_config = self.config.get("movement", {})
-        self.movement_detector = MovementDetector(
-            velocity_threshold=movement_config.get("velocity_threshold", 120.0),
-            monitored_keypoints=movement_config.get("monitored_keypoints"),
-            position_smoothing_alpha=movement_config.get("position_smoothing_alpha", 0.2),
-            velocity_window_duration=movement_config.get("velocity_window_duration", 0.3),
-            min_consecutive_frames=movement_config.get("min_consecutive_frames", 2),
-            keypoint_confidence_threshold=movement_config.get("keypoint_confidence_threshold", 0.5),
-            fps=movement_config.get("fps", 30.0),
-        )
 
         # AI pipeline (will be started later)
         self.pipeline = None
@@ -141,11 +141,11 @@ class FreezingPhantomsGame:
         # Active player tracking
         self.active_player_id = None  # Track ID of player currently on board
         self.last_debug_time = 0  # For periodic debug output
-        
+
         # Lava step tracking (delay before counting as violation)
         self.lava_step_start_time = {}  # track_id -> time when first stepped on lava
         self.lava_step_delay = 1.5  # seconds to wait before counting as violation
-        
+
         # Game start tracking
         self.player_on_start_square = False  # Wait for player to reach start before monitoring
 
@@ -267,7 +267,7 @@ class FreezingPhantomsGame:
 
                 # Update game state
                 self.game_state.update(dt, player_data)
-                
+
                 # If in countdown, wait for player to be on start square
                 if self.game_state.current_state == GameState.COUNTDOWN:
                     if player_data and self._check_player_on_start_square(player_data):
@@ -283,7 +283,7 @@ class FreezingPhantomsGame:
                             self.game_state.state_duration = float("inf")
                             if self.game_state.tile_grid:
                                 self.game_state.green_light_starting_row = self.game_state.tile_grid.player_row
-                
+
                 # Print periodic debug info about tracked player (every 2 seconds)
                 if current_time - self.last_debug_time >= 2.0:
                     self._print_player_debug_info(player_data)
@@ -308,7 +308,7 @@ class FreezingPhantomsGame:
                 game_stats = None
                 if self.game_state.current_state == GameState.WIN:
                     game_stats = self.game_state.get_game_stats()
-                
+
                 # Calculate current score for display
                 current_score = 0
                 if self.game_state.game_start_time:
@@ -450,7 +450,7 @@ class FreezingPhantomsGame:
                       f"Green tiles: {green_count}")
         elif self.active_player_id is not None:
             print(f"⚠️  No player currently on board (last tracked: {self.active_player_id})")
-    
+
     def _check_player_on_start_square(self, player_data: dict) -> bool:
         """
         Check if player is standing on a green tile in the starting row.
@@ -469,12 +469,12 @@ class FreezingPhantomsGame:
                 leg_x, leg_y = player.leg_position
                 proj_x, proj_y = self.renderer.transform_point(leg_x, leg_y)
                 current_tile = self.tile_grid.get_player_current_tile((proj_x, proj_y))
-                
+
                 # Check if on starting row and on a green tile
                 if current_tile and current_tile.row == self.tile_grid.starting_row:
                     if current_tile.state == TileState.GREEN:
                         return True
-        
+
         return False
 
     def _check_tile_violations(self, player_data: dict) -> None:
@@ -506,14 +506,14 @@ class FreezingPhantomsGame:
                     if track_id not in self.lava_step_start_time:
                         # First time stepping on lava, start timer
                         self.lava_step_start_time[track_id] = current_time
-                        hailo_logger.debug("Player %d stepped on lava, starting %ss timer", 
+                        hailo_logger.debug("Player %d stepped on lava, starting %ss timer",
                                           track_id, self.lava_step_delay)
                     else:
                         # Check if enough time has passed
                         elapsed = current_time - self.lava_step_start_time[track_id]
                         if elapsed >= self.lava_step_delay:
                             # Trigger violation
-                            hailo_logger.warning("Player %d on lava for %.1fs - violation!", 
+                            hailo_logger.warning("Player %d on lava for %.1fs - violation!",
                                                 track_id, elapsed)
                             self.game_state.register_tile_violation(track_id)
                             # Trigger visual effect
@@ -539,7 +539,7 @@ class FreezingPhantomsGame:
             return
 
         current_players = player_data["players"]
-        
+
         # Enable debug logging to see all velocities during RED_LIGHT
         debug_log = True
         movement_results = self.movement_detector.detect_player_movement(current_players, debug_log=debug_log)
