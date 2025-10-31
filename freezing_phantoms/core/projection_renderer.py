@@ -247,9 +247,6 @@ class ProjectionRenderer:
             (self.projector_resolution[1], self.projector_resolution[0], 3),
             dtype=np.uint8,
         )
-        
-        # First render hearts at TOP of screen
-        canvas = self._render_hearts_top(canvas, current_hearts)
 
         if state == GameState.COUNTDOWN:
             canvas = self._render_countdown(canvas)
@@ -268,8 +265,9 @@ class ProjectionRenderer:
         elif state == GameState.GAME_OVER:
             canvas = self._render_game_over(canvas)
         
-        # Render UI bar at bottom LAST so it overlays everything
-        canvas = self._render_ui_bar_bottom(canvas, state, current_score)
+        # Render UI elements at bottom (closest to projector) LAST so they overlay everything
+        # Both hearts and score bar facing player (upside down)
+        canvas = self._render_ui_bar_bottom(canvas, state, current_hearts, current_score)
 
         return canvas
 
@@ -694,62 +692,17 @@ class ProjectionRenderer:
 
         return canvas
 
-    def _render_hearts_top(self, canvas: np.ndarray, current_hearts: int) -> np.ndarray:
-        """
-        Render hearts at TOP of screen.
-
-        Args:
-            canvas (np.ndarray): Canvas to render on.
-            current_hearts (int): Number of hearts remaining.
-
-        Returns:
-            np.ndarray: Canvas with hearts rendered.
-        """
-        width = canvas.shape[1]
-        hearts_y = 40  # Top of screen
-        heart_spacing = 50
-        hearts_start_x = (width - (3 * heart_spacing)) // 2  # Center them
-
-        for i in range(3):  # Always show 3 heart slots
-            heart_x = hearts_start_x + (i * heart_spacing) + 25
-            if i < current_hearts:
-                # Filled heart (red)
-                cv2.circle(canvas, (heart_x - 10, hearts_y), 12, (0, 0, 255), -1)
-                cv2.circle(canvas, (heart_x + 10, hearts_y), 12, (0, 0, 255), -1)
-                pts = np.array(
-                    [
-                        [heart_x - 22, hearts_y],
-                        [heart_x, hearts_y + 25],
-                        [heart_x + 22, hearts_y],
-                    ],
-                    np.int32,
-                )
-                cv2.fillPoly(canvas, [pts], (0, 0, 255))
-            else:
-                # Empty heart (gray outline)
-                cv2.circle(canvas, (heart_x - 10, hearts_y), 12, (100, 100, 100), 2)
-                cv2.circle(canvas, (heart_x + 10, hearts_y), 12, (100, 100, 100), 2)
-                pts = np.array(
-                    [
-                        [heart_x - 22, hearts_y],
-                        [heart_x, hearts_y + 25],
-                        [heart_x + 22, hearts_y],
-                    ],
-                    np.int32,
-                )
-                cv2.polylines(canvas, [pts], False, (100, 100, 100), 2)
-
-        return canvas
-
     def _render_ui_bar_bottom(
-        self, canvas: np.ndarray, state: GameState, current_score: int
+        self, canvas: np.ndarray, state: GameState, current_hearts: int, current_score: int
     ) -> np.ndarray:
         """
-        Render UI bar at bottom with score and game state.
+        Render UI bar at bottom (closest to projector) with hearts and score,
+        all facing the player (upside down).
 
         Args:
             canvas (np.ndarray): Canvas to render on.
             state (GameState): Current game state.
+            current_hearts (int): Number of hearts remaining.
             current_score (int): Current score.
 
         Returns:
@@ -757,7 +710,7 @@ class ProjectionRenderer:
         """
         height = canvas.shape[0]
         width = canvas.shape[1]
-        bar_height = 100
+        bar_height = 150  # Increased to fit hearts + text
         bar_y_start = height - bar_height
 
         # Semi-transparent dark bar at bottom
@@ -767,14 +720,41 @@ class ProjectionRenderer:
 
         font = cv2.FONT_HERSHEY_SIMPLEX
 
-        # Render score on right side
-        score_text = f"Score: {current_score}"
-        score_size = cv2.getTextSize(score_text, font, 1.2, 3)[0]
-        score_x = width - score_size[0] - 50
-        score_y = bar_y_start + 55
-        cv2.putText(canvas, score_text, (score_x, score_y), font, 1.2, (255, 255, 255), 3)
+        # === HEARTS (top part of UI bar, upside down) ===
+        hearts_y = bar_y_start + 35  # Near top of bar
+        heart_spacing = 50
+        hearts_start_x = (width - (3 * heart_spacing)) // 2  # Center them
 
-        # Render state message in center
+        for i in range(3):  # Always show 3 heart slots
+            heart_x = hearts_start_x + (i * heart_spacing) + 25
+            if i < current_hearts:
+                # Filled heart (red) - upside down
+                cv2.circle(canvas, (heart_x - 10, hearts_y), 12, (0, 0, 255), -1)
+                cv2.circle(canvas, (heart_x + 10, hearts_y), 12, (0, 0, 255), -1)
+                pts = np.array(
+                    [
+                        [heart_x - 22, hearts_y],
+                        [heart_x, hearts_y - 25],  # Flipped: negative Y for upside down
+                        [heart_x + 22, hearts_y],
+                    ],
+                    np.int32,
+                )
+                cv2.fillPoly(canvas, [pts], (0, 0, 255))
+            else:
+                # Empty heart (gray outline) - upside down
+                cv2.circle(canvas, (heart_x - 10, hearts_y), 12, (100, 100, 100), 2)
+                cv2.circle(canvas, (heart_x + 10, hearts_y), 12, (100, 100, 100), 2)
+                pts = np.array(
+                    [
+                        [heart_x - 22, hearts_y],
+                        [heart_x, hearts_y - 25],  # Flipped: negative Y for upside down
+                        [heart_x + 22, hearts_y],
+                    ],
+                    np.int32,
+                )
+                cv2.polylines(canvas, [pts], False, (100, 100, 100), 2)
+
+        # === STATE MESSAGE (center, upside down) ===
         if state == GameState.GREEN_LIGHT:
             message = "GO!"
             color = (0, 255, 0)
@@ -795,10 +775,18 @@ class ProjectionRenderer:
             color = (255, 255, 255)
 
         if message:
-            msg_size = cv2.getTextSize(message, font, 1.0, 2)[0]
-            msg_x = (width - msg_size[0]) // 2
-            msg_y = bar_y_start + 55
-            cv2.putText(canvas, message, (msg_x, msg_y), font, 1.0, color, 2)
+            # Render upside down text
+            canvas = self._render_upside_down_text(
+                canvas, message, None, bar_y_start + 90, color, 1.0, 2, centered=True
+            )
+
+        # === SCORE (right side, upside down) ===
+        score_text = f"Score: {current_score}"
+        score_size = cv2.getTextSize(score_text, font, 1.0, 2)[0]
+        score_x = width - score_size[0] - 50
+        canvas = self._render_upside_down_text(
+            canvas, score_text, score_x, bar_y_start + 90, (255, 255, 255), 1.0, 2, centered=False
+        )
 
         return canvas
 
