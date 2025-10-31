@@ -1,13 +1,22 @@
 """
 Movement detector for Freezing Phantoms game.
 
-Detects player movement by comparing pose keypoints between frames.
-Includes smoothing and sensitivity controls for better stability.
+Uses a two-stage approach:
+1. Smooth noisy raw keypoint positions (exponential moving average)
+2. Calculate velocity from smoothed positions over rolling time window
+3. Detect movement when velocity exceeds threshold consistently
+
+This approach handles noisy measurements and distinguishes between
+intentional movement and slow drift/sway.
 """
 
 import math
+import time
 from collections import deque
 from typing import Dict, List, Optional, Tuple
+
+import cv2
+import numpy as np
 
 from hailo_apps.hailo_app_python.core.common.hailo_logger import get_logger
 
@@ -16,131 +25,138 @@ hailo_logger = get_logger(__name__)
 
 class MovementDetector:
     """
-    Detects movement by comparing pose keypoints over time.
-    Includes smoothing and sensitivity controls for better stability.
+    Detects movement using velocity-based rolling window approach.
+    
+    Two-stage process:
+    1. Position Smoothing: Apply EMA to noisy raw keypoint positions
+    2. Velocity Calculation: Calculate velocity from smoothed positions over time window
+    
+    Movement is detected when velocity exceeds threshold for multiple consecutive frames.
 
     Attributes:
-        threshold_pixels (float): Movement threshold in pixels.
+        velocity_threshold (float): Velocity threshold in pixels/second.
         monitored_keypoints (List[str]): Keypoints to monitor for movement.
-        smoothing_alpha (float): Smoothing factor for exponential moving average (0-1).
-        pose_history_size (int): Number of poses to keep in history for smoothing.
-        sensitivity_multiplier (float): Multiplier for sensitivity adjustment.
-        pose_histories (Dict[int, deque]): Pose history for each track ID.
+        position_smoothing_alpha (float): Smoothing for raw positions (0-1, lower = more smoothing).
+        velocity_window_duration (float): Time window for velocity calculation (seconds).
+        min_consecutive_frames (int): Consecutive frames above threshold to trigger detection.
+        keypoint_confidence_threshold (float): Minimum confidence for keypoints.
+        fps (float): Expected frame rate for time calculations.
     """
 
     def __init__(
         self,
-        threshold_pixels: float = 20.0,
+        velocity_threshold: float = 100.0,  # pixels/second (not just pixels!)
         monitored_keypoints: List[str] = None,
-        smoothing_alpha: float = 0.3,
-        pose_history_size: int = 5,
-        sensitivity_multiplier: float = 1.0,
-        keypoint_confidence_threshold: float = 0.5
+        position_smoothing_alpha: float = 0.3,  # For smoothing raw positions
+        velocity_window_duration: float = 0.3,  # seconds
+        min_consecutive_frames: int = 2,
+        keypoint_confidence_threshold: float = 0.5,
+        fps: float = 30.0
     ):
         """
-        Initialize movement detector.
+        Initialize velocity-based movement detector.
 
         Args:
-            threshold_pixels (float): Movement threshold in pixels.
+            velocity_threshold (float): Velocity threshold in pixels/second.
             monitored_keypoints (List[str], optional): List of keypoint names to monitor.
-                Defaults to wrists, ankles, and shoulders.
-            smoothing_alpha (float): Smoothing factor for exponential moving average (0-1).
-                Higher values = more responsive, lower values = more stable.
-            pose_history_size (int): Number of poses to keep in history for smoothing.
-            sensitivity_multiplier (float): Multiplier for sensitivity adjustment.
-            keypoint_confidence_threshold (float): Minimum confidence score for keypoints to use.
+            position_smoothing_alpha (float): Smoothing factor for raw positions (0-1).
+                Lower = more smoothing (less noise), Higher = more responsive.
+            velocity_window_duration (float): Time window for velocity calculation (seconds).
+            min_consecutive_frames (int): Consecutive frames above threshold to trigger.
+            keypoint_confidence_threshold (float): Minimum confidence score for keypoints.
+            fps (float): Expected frame rate for time calculations.
         """
-        self.threshold_pixels = threshold_pixels
-        self.smoothing_alpha = max(0.0, min(1.0, smoothing_alpha))  # Clamp to [0,1]
-        self.pose_history_size = max(1, pose_history_size)
-        self.sensitivity_multiplier = max(0.1, sensitivity_multiplier)  # Minimum 0.1
-        self.keypoint_confidence_threshold = max(0.0, min(1.0, keypoint_confidence_threshold))  # Clamp to [0,1]
+        self.velocity_threshold = velocity_threshold
+        self.position_smoothing_alpha = max(0.0, min(1.0, position_smoothing_alpha))
+        self.velocity_window_duration = velocity_window_duration
+        self.min_consecutive_frames = max(1, min_consecutive_frames)
+        self.keypoint_confidence_threshold = max(0.0, min(1.0, keypoint_confidence_threshold))
+        self.fps = fps
 
         if monitored_keypoints is None:
             self.monitored_keypoints = [
                 "left_wrist",
                 "right_wrist",
-                "left_ankle",
-                "right_ankle",
-                "left_shoulder",
-                "right_shoulder",
+                "left_hip",
+                "right_hip",
             ]
         else:
             self.monitored_keypoints = monitored_keypoints
 
-        # Pose history for smoothing - track_id -> deque of poses
-        self.pose_histories: Dict[int, deque] = {}
+        # Smoothed pose history with timestamps: {track_id: deque of (timestamp, smoothed_pose)}
+        max_history_frames = int(fps * velocity_window_duration * 2)  # Keep 2x window for safety
+        self.pose_history_timestamped: Dict[int, deque] = {}
+        
+        # Last smoothed pose for EMA: {track_id: {keypoint: (x, y)}}
+        self.last_smoothed_pose: Dict[int, Dict[str, Tuple[float, float]]] = {}
+        
+        # Consecutive violation counter: {track_id: int}
+        self.consecutive_violations: Dict[int, int] = {}
+        
+        # Velocity cache for visualization: {track_id: {keypoint: (vx, vy)}}
+        self.velocity_vectors: Dict[int, Dict[str, Tuple[float, float]]] = {}
+        
+        self.max_history_frames = max_history_frames
 
         hailo_logger.info(
-            "MovementDetector initialized: threshold=%spx, "
+            "MovementDetector initialized (velocity-based): "
+            "threshold=%.1fpx/s, "
             "monitoring %d keypoints, "
-            "smoothing_alpha=%s, "
-            "sensitivity=%sx, "
-            "keypoint_confidence_threshold=%s",
-            threshold_pixels,
+            "position_smoothing_alpha=%.2f, "
+            "velocity_window=%.2fs, "
+            "min_consecutive_frames=%d, "
+            "keypoint_confidence_threshold=%.2f, "
+            "fps=%.1f",
+            velocity_threshold,
             len(self.monitored_keypoints),
-            self.smoothing_alpha,
-            self.sensitivity_multiplier,
-            self.keypoint_confidence_threshold
+            self.position_smoothing_alpha,
+            velocity_window_duration,
+            min_consecutive_frames,
+            keypoint_confidence_threshold,
+            fps
         )
 
-    def _smooth_pose(self, track_id: int, pose: Dict[str, tuple]) -> Dict[str, tuple]:
+    def _smooth_keypoint_position(
+        self, track_id: int, keypoint_name: str, raw_position: Tuple[float, float]
+    ) -> Tuple[float, float]:
         """
-        Apply smoothing to a pose using exponential moving average.
+        Smooth a single keypoint position using exponential moving average.
+        Stage 1: Position smoothing to reduce measurement noise.
 
         Args:
             track_id (int): Track ID of the player.
-            pose (Dict[str, tuple]): Current pose keypoints.
+            keypoint_name (str): Name of keypoint.
+            raw_position (Tuple[float, float]): Raw (noisy) position (x, y).
 
         Returns:
-            Dict[str, tuple]: Smoothed pose keypoints.
+            Tuple[float, float]: Smoothed position (x, y).
         """
-        if track_id not in self.pose_histories:
-            self.pose_histories[track_id] = deque(maxlen=self.pose_history_size)
-
-        history = self.pose_histories[track_id]
-
-        if not history:
-            # First pose - no smoothing needed
-            history.append(pose)
-            return pose
-
+        if track_id not in self.last_smoothed_pose:
+            self.last_smoothed_pose[track_id] = {}
+        
+        if keypoint_name not in self.last_smoothed_pose[track_id]:
+            # First measurement - no smoothing
+            self.last_smoothed_pose[track_id][keypoint_name] = raw_position
+            return raw_position
+        
         # Apply exponential moving average
-        smoothed_pose = {}
-        last_pose = history[-1]
-
-        for keypoint_name in self.monitored_keypoints:
-            if keypoint_name in pose and keypoint_name in last_pose:
-                x0, y0 = last_pose[keypoint_name]
-                x1, y1 = pose[keypoint_name]
-
-                # Exponential moving average
-                smoothed_x = x0 + self.smoothing_alpha * (x1 - x0)
-                smoothed_y = y0 + self.smoothing_alpha * (y1 - y0)
-
-                smoothed_pose[keypoint_name] = (smoothed_x, smoothed_y)
-            elif keypoint_name in pose:
-                # New keypoint detected
-                smoothed_pose[keypoint_name] = pose[keypoint_name]
-
-        # Add to history
-        history.append(smoothed_pose)
-        return smoothed_pose
-
-    def _get_effective_threshold(self) -> float:
-        """
-        Get the effective threshold adjusted by sensitivity multiplier.
-
-        Returns:
-            float: Adjusted threshold in pixels.
-        """
-        return self.threshold_pixels * self.sensitivity_multiplier
+        x_prev, y_prev = self.last_smoothed_pose[track_id][keypoint_name]
+        x_raw, y_raw = raw_position
+        
+        alpha = self.position_smoothing_alpha
+        x_smooth = x_prev + alpha * (x_raw - x_prev)
+        y_smooth = y_prev + alpha * (y_raw - y_prev)
+        
+        smoothed = (x_smooth, y_smooth)
+        self.last_smoothed_pose[track_id][keypoint_name] = smoothed
+        
+        return smoothed
 
     def _filter_keypoints_by_confidence(
         self,
-        pose_keypoints: Dict[str, tuple],
+        pose_keypoints: Dict[str, Tuple[float, float]],
         pose_keypoint_confidences: Dict[str, float]
-    ) -> Dict[str, tuple]:
+    ) -> Dict[str, Tuple[float, float]]:
         """
         Filter keypoints based on confidence scores.
 
@@ -159,275 +175,325 @@ class MovementDetector:
                 pose_keypoint_confidences[keypoint_name] >= self.keypoint_confidence_threshold):
                 filtered_keypoints[keypoint_name] = pose_keypoints[keypoint_name]
 
-        hailo_logger.debug(
-            "Filtered keypoints: %d/%d passed confidence threshold (%.2f)",
-            len(filtered_keypoints),
-            len(pose_keypoints),
-            self.keypoint_confidence_threshold
-        )
-
         return filtered_keypoints
 
-    def detect_movement(
-        self, pose_t0: Dict[str, tuple], pose_t1: Dict[str, tuple]
-    ) -> Tuple[bool, float, Optional[str]]:
+    def add_pose(self, track_id: int, raw_pose: Dict[str, Tuple[float, float]], 
+                 pose_confidences: Dict[str, float], current_time: Optional[float] = None) -> None:
         """
-        Detect if movement occurred between two poses.
+        Add a new pose measurement.
+        Stage 1: Smooth raw positions, then add to timestamped history.
 
         Args:
-            pose_t0 (Dict[str, tuple]): Initial pose keypoints {keypoint_name: (x, y)}.
-            pose_t1 (Dict[str, tuple]): Current pose keypoints {keypoint_name: (x, y)}.
+            track_id (int): Track ID of player.
+            raw_pose (Dict[str, Tuple[float, float]]): Raw pose keypoints.
+            pose_confidences (Dict[str, float]): Keypoint confidence scores.
+            current_time (Optional[float]): Timestamp (seconds). If None, uses time.time().
+        """
+        if current_time is None:
+            current_time = time.time()
+        
+        # Filter by confidence
+        filtered_pose = self._filter_keypoints_by_confidence(raw_pose, pose_confidences)
+        
+        if not filtered_pose:
+            return
+        
+        # Smooth each keypoint position
+        smoothed_pose = {}
+        for keypoint_name, raw_position in filtered_pose.items():
+            smoothed_position = self._smooth_keypoint_position(track_id, keypoint_name, raw_position)
+            smoothed_pose[keypoint_name] = smoothed_position
+        
+        # Add to timestamped history
+        if track_id not in self.pose_history_timestamped:
+            self.pose_history_timestamped[track_id] = deque(maxlen=self.max_history_frames)
+        
+        self.pose_history_timestamped[track_id].append((current_time, smoothed_pose))
+
+    def calculate_velocity(self, track_id: int) -> Tuple[float, Optional[str]]:
+        """
+        Calculate current velocity over rolling time window.
+        Stage 2: Calculate velocity from smoothed positions.
+
+        Args:
+            track_id (int): Track ID of player.
 
         Returns:
-            Tuple[bool, float, Optional[str]]:
-                - Whether movement detected (True/False)
-                - Maximum displacement in pixels
-                - Name of keypoint with maximum movement (or None)
+            Tuple[float, Optional[str]]: (max_velocity in px/s, keypoint_name with max velocity)
         """
-        if not pose_t0 or not pose_t1:
-            hailo_logger.debug("Empty pose data provided")
-            return False, 0.0, None
-
-        max_displacement = 0.0
+        if track_id not in self.pose_history_timestamped:
+            return 0.0, None
+        
+        history = self.pose_history_timestamped[track_id]
+        
+        if len(history) < 2:
+            return 0.0, None
+        
+        # Get poses within velocity window
+        current_time = history[-1][0]
+        window_start_time = current_time - self.velocity_window_duration
+        
+        window_poses = [(t, p) for t, p in history if t >= window_start_time]
+        
+        if len(window_poses) < 2:
+            return 0.0, None
+        
+        # Calculate velocity for each keypoint
+        max_velocity = 0.0
         max_keypoint = None
-        moved = False
-
-        # Compare each monitored keypoint
+        velocity_dict = {}
+        
+        t_start, pose_start = window_poses[0]
+        t_end, pose_end = window_poses[-1]
+        time_delta = t_end - t_start
+        
+        if time_delta < 0.01:  # Avoid division by zero
+            return 0.0, None
+        
         for keypoint_name in self.monitored_keypoints:
-            if keypoint_name not in pose_t0 or keypoint_name not in pose_t1:
-                continue
+            if keypoint_name in pose_start and keypoint_name in pose_end:
+                x0, y0 = pose_start[keypoint_name]
+                x1, y1 = pose_end[keypoint_name]
+                
+                # Calculate displacement and velocity
+                dx = x1 - x0
+                dy = y1 - y0
+                displacement = math.sqrt(dx**2 + dy**2)
+                velocity = displacement / time_delta  # pixels/second
+                
+                # Store velocity vector for visualization
+                vx = dx / time_delta
+                vy = dy / time_delta
+                velocity_dict[keypoint_name] = (vx, vy)
+                
+                if velocity > max_velocity:
+                    max_velocity = velocity
+                    max_keypoint = keypoint_name
+        
+        # Cache velocity vectors for visualization
+        if track_id not in self.velocity_vectors:
+            self.velocity_vectors[track_id] = {}
+        self.velocity_vectors[track_id] = velocity_dict
+        
+        return max_velocity, max_keypoint
 
-            # Calculate Euclidean distance
-            x0, y0 = pose_t0[keypoint_name]
-            x1, y1 = pose_t1[keypoint_name]
+    def detect_movement(self, track_id: int) -> Tuple[bool, float, Optional[str]]:
+        """
+        Detect if player is currently moving.
+        Requires sustained velocity over multiple consecutive frames.
 
-            displacement = math.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2)
+        Args:
+            track_id (int): Track ID of player.
 
-            if displacement > max_displacement:
-                max_displacement = displacement
-                max_keypoint = keypoint_name
-
-            effective_threshold = self._get_effective_threshold()
-            if displacement > effective_threshold:
-                moved = True
-
-        if moved:
-            effective_threshold = self._get_effective_threshold()
-            hailo_logger.debug(
-                "Movement detected: %s moved %.1fpx (threshold: %.1fpx)",
-                max_keypoint,
-                max_displacement,
-                effective_threshold
-            )
-
-        return moved, max_displacement, max_keypoint
+        Returns:
+            Tuple[bool, float, Optional[str]]: (movement_detected, velocity, keypoint_name)
+        """
+        velocity, keypoint = self.calculate_velocity(track_id)
+        
+        # Check if velocity exceeds threshold
+        if velocity > self.velocity_threshold:
+            # Increment consecutive violations
+            if track_id not in self.consecutive_violations:
+                self.consecutive_violations[track_id] = 0
+            self.consecutive_violations[track_id] += 1
+            
+            # Require multiple consecutive frames above threshold
+            if self.consecutive_violations[track_id] >= self.min_consecutive_frames:
+                hailo_logger.debug(
+                    "Movement detected for track %d: %s moving at %.1f px/s (threshold: %.1f px/s, %d consecutive frames)",
+                    track_id, keypoint, velocity, self.velocity_threshold, self.consecutive_violations[track_id]
+                )
+                return True, velocity, keypoint
+        else:
+            # Reset counter if below threshold
+            self.consecutive_violations[track_id] = 0
+        
+        return False, velocity, keypoint
 
     def detect_player_movement(
         self,
-        players_t0: List,
-        players_t1: List,
+        players_current: List,
     ) -> Dict[int, Tuple[bool, float, Optional[str]]]:
         """
-        Detect movement for multiple players by matching track IDs.
-        Applies confidence filtering and smoothing to current poses before comparison.
+        Detect movement for multiple players.
+        First adds current poses to history, then checks for movement.
 
         Args:
-            players_t0 (List[PlayerData]): Initial player states.
-            players_t1 (List[PlayerData]): Current player states.
+            players_current (List[PlayerData]): Current player states.
 
         Returns:
             Dict[int, Tuple[bool, float, Optional[str]]]:
-                Dictionary mapping track_id to (moved, displacement, keypoint).
+                Dictionary mapping track_id to (moved, velocity, keypoint).
         """
+        current_time = time.time()
         movement_results = {}
-
-        # Create lookup dictionary for T0 players
-        players_t0_dict = {player.track_id: player for player in players_t0}
-
-        # Check each current player against their initial state
-        for player_t1 in players_t1:
-            track_id = player_t1.track_id
-
-            if track_id not in players_t0_dict:
-                hailo_logger.debug(
-                    "Track ID %d not found in initial state (new player)",
-                    track_id
-                )
-                continue
-
-            player_t0 = players_t0_dict[track_id]
-
-            # Filter keypoints by confidence for both poses
-            filtered_pose_t0 = self._filter_keypoints_by_confidence(
-                player_t0.pose_keypoints,
-                getattr(player_t0, 'pose_keypoint_confidences', {})
+        
+        # Add current poses to history (with smoothing)
+        for player in players_current:
+            track_id = player.track_id
+            self.add_pose(
+                track_id,
+                player.pose_keypoints,
+                getattr(player, 'pose_keypoint_confidences', {}),
+                current_time
             )
-            filtered_pose_t1 = self._filter_keypoints_by_confidence(
-                player_t1.pose_keypoints,
-                getattr(player_t1, 'pose_keypoint_confidences', {})
-            )
-
-            # Apply smoothing to current pose
-            smoothed_pose_t1 = self._smooth_pose(track_id, filtered_pose_t1)
-
-            # Compare poses (using filtered and smoothed poses)
-            moved, displacement, keypoint = self.detect_movement(
-                filtered_pose_t0, smoothed_pose_t1
-            )
-
-            movement_results[track_id] = (moved, displacement, keypoint)
-
+        
+        # Detect movement for each player
+        for player in players_current:
+            track_id = player.track_id
+            moved, velocity, keypoint = self.detect_movement(track_id)
+            movement_results[track_id] = (moved, velocity, keypoint)
+        
         return movement_results
 
-    def calculate_pose_displacement(
-        self, pose_t0: Dict[str, tuple], pose_t1: Dict[str, tuple]
-    ) -> float:
+    def get_velocity_vectors_for_visualization(self, track_id: int) -> Dict[str, Tuple[float, float]]:
         """
-        Calculate average displacement across all monitored keypoints.
+        Get velocity vectors for visualization (arrows).
 
         Args:
-            pose_t0 (Dict[str, tuple]): Initial pose.
-            pose_t1 (Dict[str, tuple]): Current pose.
+            track_id (int): Track ID of player.
 
         Returns:
-            float: Average displacement in pixels.
+            Dict[str, Tuple[float, float]]: Keypoint name to (vx, vy) velocity in px/s.
         """
-        displacements = []
+        return self.velocity_vectors.get(track_id, {})
 
-        for keypoint_name in self.monitored_keypoints:
-            if keypoint_name not in pose_t0 or keypoint_name not in pose_t1:
-                continue
+    def get_smoothed_pose(self, track_id: int) -> Optional[Dict[str, Tuple[float, float]]]:
+        """
+        Get the most recent smoothed pose for a player.
 
-            x0, y0 = pose_t0[keypoint_name]
-            x1, y1 = pose_t1[keypoint_name]
+        Args:
+            track_id (int): Track ID of player.
 
-            displacement = math.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2)
-            displacements.append(displacement)
+        Returns:
+            Optional[Dict[str, Tuple[float, float]]]: Smoothed pose or None.
+        """
+        if track_id not in self.pose_history_timestamped:
+            return None
+        
+        history = self.pose_history_timestamped[track_id]
+        if not history:
+            return None
+        
+        _, smoothed_pose = history[-1]
+        return smoothed_pose
 
-        if not displacements:
-            return 0.0
-
-        return sum(displacements) / len(displacements)
-
-    def get_keypoint_velocity(
+    def draw_velocity_arrows(
         self,
-        pose_history: List[Dict[str, tuple]],
-        keypoint_name: str,
-        time_delta: float = 1.0,
-    ) -> Optional[Tuple[float, float]]:
+        canvas: np.ndarray,
+        track_id: int,
+        pose_keypoints: Dict[str, Tuple[float, float]],
+        scale_factor: float = 0.05,
+        color: Tuple[int, int, int] = (0, 255, 255)
+    ) -> np.ndarray:
         """
-        Calculate velocity of a specific keypoint over time.
+        Draw velocity arrows on debug visualization.
 
         Args:
-            pose_history (List[Dict[str, tuple]]): List of poses over time.
-            keypoint_name (str): Name of keypoint to track.
-            time_delta (float): Time between poses in seconds.
+            canvas (np.ndarray): Image to draw on.
+            track_id (int): Track ID of player.
+            pose_keypoints (Dict[str, Tuple[float, float]]): Current keypoint positions.
+            scale_factor (float): Scale factor for arrow length (velocity in px/s * scale).
+            color (Tuple[int, int, int]): Arrow color (BGR).
 
         Returns:
-            Optional[Tuple[float, float]]: (vx, vy) velocity in pixels/second or None.
+            np.ndarray: Canvas with arrows drawn.
         """
-        if len(pose_history) < 2:
-            return None
+        velocity_vectors = self.get_velocity_vectors_for_visualization(track_id)
+        
+        if not velocity_vectors:
+            return canvas
+        
+        for keypoint_name, (vx, vy) in velocity_vectors.items():
+            if keypoint_name not in pose_keypoints:
+                continue
+            
+            x, y = pose_keypoints[keypoint_name]
+            x, y = int(x), int(y)
+            
+            # Calculate arrow end point (scale velocity for visualization)
+            end_x = int(x + vx * scale_factor)
+            end_y = int(y + vy * scale_factor)
+            
+            # Calculate velocity magnitude
+            velocity_mag = math.sqrt(vx**2 + vy**2)
+            
+            # Color intensity based on velocity
+            if velocity_mag > self.velocity_threshold:
+                # Above threshold - red
+                arrow_color = (0, 0, 255)
+            else:
+                # Below threshold - yellow
+                arrow_color = color
+            
+            # Draw arrow
+            cv2.arrowedLine(canvas, (x, y), (end_x, end_y), arrow_color, 2, tipLength=0.3)
+            
+            # Draw velocity text
+            velocity_text = f"{velocity_mag:.0f}"
+            cv2.putText(canvas, velocity_text, (x + 5, y - 5), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, arrow_color, 1)
+        
+        return canvas
 
-        # Get first and last poses
-        pose_start = pose_history[0]
-        pose_end = pose_history[-1]
-
-        if keypoint_name not in pose_start or keypoint_name not in pose_end:
-            return None
-
-        x0, y0 = pose_start[keypoint_name]
-        x1, y1 = pose_end[keypoint_name]
-
-        # Calculate velocity
-        total_time = time_delta * (len(pose_history) - 1)
-        vx = (x1 - x0) / total_time
-        vy = (y1 - y0) / total_time
-
-        return vx, vy
-
-    def set_threshold(self, threshold_pixels: float) -> None:
+    def reset_player(self, track_id: int) -> None:
         """
-        Update movement threshold.
+        Reset all data for a specific player.
 
         Args:
-            threshold_pixels (float): New threshold in pixels.
+            track_id (int): Track ID of player to reset.
         """
-        self.threshold_pixels = threshold_pixels
-        hailo_logger.info("Movement threshold updated to %spx", threshold_pixels)
+        if track_id in self.pose_history_timestamped:
+            del self.pose_history_timestamped[track_id]
+        if track_id in self.last_smoothed_pose:
+            del self.last_smoothed_pose[track_id]
+        if track_id in self.consecutive_violations:
+            del self.consecutive_violations[track_id]
+        if track_id in self.velocity_vectors:
+            del self.velocity_vectors[track_id]
 
-    def set_monitored_keypoints(self, keypoints: List[str]) -> None:
-        """
-        Update list of monitored keypoints.
+    def clear_all(self) -> None:
+        """Clear all tracking data for all players."""
+        self.pose_history_timestamped.clear()
+        self.last_smoothed_pose.clear()
+        self.consecutive_violations.clear()
+        self.velocity_vectors.clear()
+        hailo_logger.info("All movement detection data cleared")
 
-        Args:
-            keypoints (List[str]): New list of keypoint names.
+    def set_threshold(self, velocity_threshold: float) -> None:
         """
-        self.monitored_keypoints = keypoints
-        hailo_logger.info("Monitoring %d keypoints: %s", len(keypoints), keypoints)
-
-    def set_smoothing_alpha(self, alpha: float) -> None:
-        """
-        Update smoothing factor.
-
-        Args:
-            alpha (float): Smoothing factor (0-1). Higher = more responsive, lower = more stable.
-        """
-        self.smoothing_alpha = max(0.0, min(1.0, alpha))
-        hailo_logger.info("Smoothing alpha updated to %s", self.smoothing_alpha)
-
-    def set_sensitivity_multiplier(self, multiplier: float) -> None:
-        """
-        Update sensitivity multiplier.
+        Update velocity threshold.
 
         Args:
-            multiplier (float): Sensitivity multiplier (>0). Higher = more sensitive.
+            velocity_threshold (float): New threshold in pixels/second.
         """
-        self.sensitivity_multiplier = max(0.1, multiplier)
-        hailo_logger.info("Sensitivity multiplier updated to %sx", self.sensitivity_multiplier)
+        self.velocity_threshold = velocity_threshold
+        hailo_logger.info("Velocity threshold updated to %.1f px/s", velocity_threshold)
 
-    def set_pose_history_size(self, size: int) -> None:
+    def set_position_smoothing_alpha(self, alpha: float) -> None:
         """
-        Update pose history size.
-
-        Args:
-            size (int): Number of poses to keep in history.
-        """
-        self.pose_history_size = max(1, size)
-        # Update existing histories
-        for history in self.pose_histories.values():
-            history.maxlen = self.pose_history_size
-        hailo_logger.info("Pose history size updated to %d", self.pose_history_size)
-
-    def clear_pose_histories(self) -> None:
-        """Clear all pose histories (useful for resetting smoothing)."""
-        self.pose_histories.clear()
-        hailo_logger.info("Pose histories cleared")
-
-    def set_keypoint_confidence_threshold(self, threshold: float) -> None:
-        """
-        Update keypoint confidence threshold.
+        Update position smoothing factor.
 
         Args:
-            threshold (float): New confidence threshold (0-1).
+            alpha (float): Smoothing factor (0-1). Lower = more smoothing.
         """
-        self.keypoint_confidence_threshold = max(0.0, min(1.0, threshold))
-        hailo_logger.info("Keypoint confidence threshold updated to %s", self.keypoint_confidence_threshold)
+        self.position_smoothing_alpha = max(0.0, min(1.0, alpha))
+        hailo_logger.info("Position smoothing alpha updated to %.2f", self.position_smoothing_alpha)
 
-    def get_smoothing_stats(self) -> Dict[str, float]:
+    def get_smoothing_stats(self) -> Dict:
         """
-        Get current smoothing statistics.
+        Get current detector statistics.
 
         Returns:
-            Dict[str, float]: Statistics including effective threshold and smoothing parameters.
+            Dict: Statistics including thresholds and active tracks.
         """
         return {
-            "threshold_pixels": self.threshold_pixels,
-            "effective_threshold": self._get_effective_threshold(),
-            "smoothing_alpha": self.smoothing_alpha,
-            "sensitivity_multiplier": self.sensitivity_multiplier,
-            "pose_history_size": self.pose_history_size,
+            "velocity_threshold": self.velocity_threshold,
+            "position_smoothing_alpha": self.position_smoothing_alpha,
+            "velocity_window_duration": self.velocity_window_duration,
+            "min_consecutive_frames": self.min_consecutive_frames,
             "keypoint_confidence_threshold": self.keypoint_confidence_threshold,
-            "active_tracks": len(self.pose_histories)
+            "fps": self.fps,
+            "active_tracks": len(self.pose_history_timestamped),
+            "monitored_keypoints": len(self.monitored_keypoints)
         }
-
