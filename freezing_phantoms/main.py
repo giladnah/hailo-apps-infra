@@ -267,7 +267,7 @@ class FreezingPhantomsGame:
                 # Check for tile violations during GREEN_LIGHT
                 if self.game_state.current_state == GameState.GREEN_LIGHT and player_data:
                     self._check_tile_violations(player_data)
-                    
+
                     # Check if player is on front tile for 2 seconds
                     if self.game_state.check_player_on_front_tile():
                         print("✓ Player on front tile for 2s! Starting transition to RED LIGHT...")
@@ -398,13 +398,13 @@ class FreezingPhantomsGame:
                 leg_x, leg_y = player.leg_position
                 proj_x, proj_y = self.renderer.transform_point(leg_x, leg_y)
                 current_tile = self.tile_grid.get_player_current_tile((proj_x, proj_y))
-                
+
                 tile_info = f"Row {current_tile.row}, Col {current_tile.col}" if current_tile else "No tile"
                 tile_state = current_tile.state.value if current_tile else "N/A"
-                
+
                 # Count green tiles for debugging
                 green_count = len(self.tile_grid.get_tiles_by_state(TileState.GREEN))
-                
+
                 print(f"👤 Player ID: {player.track_id} | Position: ({proj_x}, {proj_y}) | "
                       f"Tile: {tile_info} | State: {tile_state} | "
                       f"Game Row: {self.tile_grid.player_row}/{self.tile_grid.current_revealed_row} | "
