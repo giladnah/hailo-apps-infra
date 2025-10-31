@@ -195,16 +195,14 @@ class MovementDetector:
         # Filter by confidence
         filtered_pose = self._filter_keypoints_by_confidence(raw_pose, pose_confidences)
 
-        if not filtered_pose:
-            return
-
-        # Smooth each keypoint position
+        # Smooth each keypoint position (even if empty, we still add timestamp to history)
         smoothed_pose = {}
         for keypoint_name, raw_position in filtered_pose.items():
             smoothed_position = self._smooth_keypoint_position(track_id, keypoint_name, raw_position)
             smoothed_pose[keypoint_name] = smoothed_position
 
-        # Add to timestamped history
+        # Add to timestamped history (always add, even if smoothed_pose is empty)
+        # This ensures bootstrap counter keeps advancing
         if track_id not in self.pose_history_timestamped:
             self.pose_history_timestamped[track_id] = deque(maxlen=self.max_history_frames)
 
@@ -247,40 +245,40 @@ class MovementDetector:
             # Collect velocities between consecutive frames
             velocities_x = []
             velocities_y = []
-            
+
             for i in range(len(window_poses) - 1):
                 t0, pose0 = window_poses[i]
                 t1, pose1 = window_poses[i + 1]
-                
+
                 if keypoint_name not in pose0 or keypoint_name not in pose1:
                     continue
-                
+
                 time_delta = t1 - t0
                 if time_delta < 0.001:  # Skip if frames too close
                     continue
-                
+
                 x0, y0 = pose0[keypoint_name]
                 x1, y1 = pose1[keypoint_name]
-                
+
                 # Calculate instantaneous velocity
                 vx = (x1 - x0) / time_delta
                 vy = (y1 - y0) / time_delta
-                
+
                 velocities_x.append(vx)
                 velocities_y.append(vy)
-            
+
             if not velocities_x:
                 continue
-            
+
             # Average the velocities
             avg_vx = sum(velocities_x) / len(velocities_x)
             avg_vy = sum(velocities_y) / len(velocities_y)
-            
+
             # Calculate magnitude
             velocity_magnitude = math.sqrt(avg_vx**2 + avg_vy**2)
-            
+
             velocity_dict[keypoint_name] = (avg_vx, avg_vy)
-            
+
             if velocity_magnitude > max_velocity:
                 max_velocity = velocity_magnitude
                 max_keypoint = keypoint_name
@@ -308,10 +306,10 @@ class MovementDetector:
         # Require 1 second of smoothed data before detecting movement
         if track_id not in self.pose_history_timestamped:
             return False, 0.0, None
-        
+
         history = self.pose_history_timestamped[track_id]
         min_frames_for_bootstrap = int(self.fps * 1.0)  # 1 full second of data
-        
+
         if len(history) < min_frames_for_bootstrap:
             # Not enough history yet - still warming up
             if debug_log:

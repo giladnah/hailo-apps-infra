@@ -10,16 +10,16 @@ game:
   flash_total: 3                        # Number of flashes before red light
   front_tile_wait_duration: 2.0         # Seconds to wait on front tile before transition
 
-# Tile grid configuration (3x6 grid)
+# Tile grid configuration (3x5 grid - row 5 removed for UI bar)
 tile_grid:
   columns: 3                            # Number of columns in grid
-  rows: 6                               # Number of rows in grid
+  rows: 5                               # Number of rows in grid (last row removed for UI bar)
   starting_row: 0                       # Starting position (0 = top, far from camera)
-  goal_row: 5                           # Goal position (5 = bottom, last row before UI bar)
+  goal_row: 4                           # Goal position (4 = bottom row, player wins when survives this row)
   penalty_rows_back: 1                  # Rows to move back on penalty
   path_width: 1                         # Number of safe tiles per row
   obstacle_density: 0.3                 # Percentage of non-path tiles that are red lava (0.0-1.0)
-  
+
 # Lives system
 lives:
   starting_hearts: 5                    # Number of lives player starts with
