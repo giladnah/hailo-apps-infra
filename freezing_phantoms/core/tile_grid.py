@@ -462,9 +462,6 @@ class TileGrid:
         Only affects tiles that are behind the player in the direction away from goal.
         Keeps the player's current row green to ensure they always have a tile to stand on.
         """
-        # Always keep current revealed row green (player needs a tile!)
-        green_count_before = len(self.get_tiles_by_state(TileState.GREEN))
-        
         if self.goal_row > self.starting_row:
             # Moving down (towards higher row numbers)
             # Remove tiles with row < player_row (but not current row)

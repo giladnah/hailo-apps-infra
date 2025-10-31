@@ -24,7 +24,7 @@ from freezing_phantoms.calibration.calibration_tool import CalibrationTool
 from freezing_phantoms.core.camera_utils import apply_camera_settings_from_file
 from freezing_phantoms.core.game_state import GameState, GameStateMachine
 from freezing_phantoms.core.movement_detector import MovementDetector
-from freezing_phantoms.core.tile_grid import TileGrid
+from freezing_phantoms.core.tile_grid import TileGrid, TileState
 from freezing_phantoms.effects.board_effects import BoardEffects
 from freezing_phantoms.core.projection_renderer import ProjectionRenderer
 from freezing_phantoms.pipeline.combined_pipeline import PoseEstimationPipeline
