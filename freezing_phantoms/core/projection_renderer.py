@@ -98,22 +98,22 @@ class ProjectionRenderer:
 
         # Get ghost image path
         ghost_path = self.ghost_config.get("image_path", "assets/ghost.png")
-        
+
         # Resolve relative path from freezing_phantoms directory
         base_dir = Path(__file__).parent.parent  # Go up from core/ to freezing_phantoms/
         full_path = base_dir / ghost_path
-        
+
         if not full_path.exists():
             hailo_logger.error("Ghost image not found at: %s", full_path)
             return
-        
+
         # Load image with alpha channel (transparency)
         self.ghost_image = cv2.imread(str(full_path), cv2.IMREAD_UNCHANGED)  # noqa: PGH003
-        
+
         if self.ghost_image is None:
             hailo_logger.error("Failed to load ghost image from: %s", full_path)
             return
-        
+
         # Resize ghost to configured size
         ghost_size = self.ghost_config.get("size", 150)
         self.ghost_image = cv2.resize(
@@ -121,8 +121,8 @@ class ProjectionRenderer:
             (ghost_size, ghost_size),
             interpolation=cv2.INTER_AREA  # noqa: PGH003
         )
-        
-        hailo_logger.info("Loaded ghost image: %dx%d from %s", 
+
+        hailo_logger.info("Loaded ghost image: %dx%d from %s",
                          ghost_size, ghost_size, full_path)
 
     def transform_point(self, cam_x: float, cam_y: float) -> Tuple[int, int]:
@@ -560,8 +560,8 @@ class ProjectionRenderer:
         # Red tint overlay
         canvas[:, :] = (10, 0, 30)  # Dark red background
 
-        # Render tile grid at reduced intensity during freeze
-        canvas = self._render_tile_grid(canvas, alpha=0.4)
+        # Render tile grid at full intensity during freeze
+        canvas = self._render_tile_grid(canvas, alpha=1.0)
 
         # Draw scanning laser effect
         laser_y = int((self.frame_counter * 5) % canvas.shape[0])
@@ -939,13 +939,13 @@ class ProjectionRenderer:
 
         # Clip to canvas bounds
         canvas_h, canvas_w = canvas.shape[:2]
-        
+
         # Calculate visible region
         src_x1 = max(0, -x1)
         src_y1 = max(0, -y1)
         src_x2 = ghost_w - max(0, x2 - canvas_w)
         src_y2 = ghost_h - max(0, y2 - canvas_h)
-        
+
         dst_x1 = max(0, x1)
         dst_y1 = max(0, y1)
         dst_x2 = min(canvas_w, x2)
@@ -957,26 +957,26 @@ class ProjectionRenderer:
 
         # Extract ghost region
         ghost_region = self.ghost_image[src_y1:src_y2, src_x1:src_x2]
-        
+
         # Check if ghost has alpha channel
         if ghost_region.shape[2] == 4:
             # Extract RGB and alpha channels
             ghost_rgb = ghost_region[:, :, :3]
             ghost_alpha = ghost_region[:, :, 3] / 255.0
-            
+
             # Apply configured opacity
             opacity = self.ghost_config.get("opacity", 0.8)
             ghost_alpha = ghost_alpha * opacity
-            
+
             # Expand alpha to 3 channels for blending
             ghost_alpha_3ch = np.dstack([ghost_alpha] * 3)
-            
+
             # Extract canvas region
             canvas_region = canvas[dst_y1:dst_y2, dst_x1:dst_x2]
-            
+
             # Alpha blend
             blended = (ghost_rgb * ghost_alpha_3ch + canvas_region * (1 - ghost_alpha_3ch)).astype(np.uint8)
-            
+
             # Place blended region back
             canvas[dst_y1:dst_y2, dst_x1:dst_x2] = blended
         else:
