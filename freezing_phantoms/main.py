@@ -347,7 +347,8 @@ class FreezingPhantomsGame:
                 # Handle ghost spawning and animation during RED_LIGHT
                 if self.game_state.current_state == GameState.RED_LIGHT:
                     # Check if ghost should spawn
-                    if self.game_state.should_spawn_ghost() and player_data and "players" in player_data:
+                    should_spawn = self.game_state.should_spawn_ghost()
+                    if should_spawn and player_data and "players" in player_data:
                         # Get player hip position (target for ghost)
                         player = player_data["players"][0]  # Use first player
                         if hasattr(player, 'pose') and player.pose:
@@ -358,7 +359,7 @@ class FreezingPhantomsGame:
                                 target_x = (left_hip[0] + right_hip[0]) / 2
                                 target_y = (left_hip[1] + right_hip[1]) / 2
                                 target_proj = self.renderer.transform_point(target_x, target_y)
-                                
+
                                 # Get spawn position from last row center
                                 ghost_spawn_row = self.config.get("ghost", {}).get("spawn_row", 4)
                                 spawn_tile = None
@@ -366,34 +367,55 @@ class FreezingPhantomsGame:
                                     if tile.row == ghost_spawn_row and tile.col == 1:  # Center column
                                         spawn_tile = tile
                                         break
-                                
+
                                 if spawn_tile:
                                     spawn_x = spawn_tile.proj_x + spawn_tile.actual_width // 2
                                     spawn_y = spawn_tile.proj_y + spawn_tile.actual_height // 2
+                                    hailo_logger.info("👻 Spawning ghost at (%d, %d) targeting (%d, %d)", 
+                                                     spawn_x, spawn_y, target_proj[0], target_proj[1])
                                     self.game_state.spawn_ghost((spawn_x, spawn_y), target_proj)
-                    
+                                else:
+                                    hailo_logger.warning("👻 Could not find spawn tile at row %d, col 1", ghost_spawn_row)
+                            else:
+                                hailo_logger.debug("👻 Missing hip keypoints for ghost target")
+                        else:
+                            hailo_logger.debug("👻 Player has no pose data")
+                    elif self.game_state.current_state == GameState.RED_LIGHT and current_time - self.last_debug_time >= 2.0:
+                        # Debug why ghost isn't spawning (only log every 2s to avoid spam)
+                        if not should_spawn:
+                            hailo_logger.debug("👻 Ghost should_spawn=False (enabled=%s, active=%s, player_row=%s, start_on_row=%s)",
+                                             self.game_state.ghost_enabled,
+                                             self.game_state.ghost_active,
+                                             self.tile_grid.player_row if self.tile_grid else "N/A",
+                                             self.game_state.ghost_start_on_row)
+
                     # Update ghost position (move towards target)
                     if self.game_state.ghost_active and self.game_state.ghost_position and self.game_state.ghost_target:
                         ghost_speed = self.config.get("ghost", {}).get("speed", 60.0)
-                        
+
                         # Calculate direction vector
                         dx = self.game_state.ghost_target[0] - self.game_state.ghost_position[0]
                         dy = self.game_state.ghost_target[1] - self.game_state.ghost_position[1]
                         distance = (dx**2 + dy**2)**0.5
-                        
+
                         if distance > 1.0:  # Only move if not at target
                             # Normalize and scale by speed * dt
                             move_distance = ghost_speed * dt
                             if move_distance > distance:
                                 move_distance = distance
-                            
+
                             dx_norm = dx / distance
                             dy_norm = dy / distance
-                            
+
                             new_x = self.game_state.ghost_position[0] + dx_norm * move_distance
                             new_y = self.game_state.ghost_position[1] + dy_norm * move_distance
-                            
+
                             self.game_state.update_ghost_position((new_x, new_y))
+                            
+                            # Debug log ghost position occasionally
+                            if current_time - self.last_debug_time >= 2.0:
+                                hailo_logger.debug("👻 Ghost active at (%.1f, %.1f), distance to target: %.1f px", 
+                                                 new_x, new_y, distance)
                 else:
                     # Deactivate ghost when not in RED_LIGHT
                     if self.game_state.ghost_active:

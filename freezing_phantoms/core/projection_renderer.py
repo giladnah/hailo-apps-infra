@@ -585,6 +585,8 @@ class ProjectionRenderer:
 
         # Render ghost if active
         if ghost_position is not None:
+            if self.ghost_image is None:
+                hailo_logger.warning("👻 Ghost position provided but ghost image not loaded!")
             canvas = self._render_ghost(canvas, ghost_position)
 
         # Add "FREEZE!" text at bottom, upside down
