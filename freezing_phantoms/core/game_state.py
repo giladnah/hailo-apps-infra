@@ -97,6 +97,13 @@ class GameStateMachine:
         self.last_flash_time = 0
         self.flash_interval = config.get("game", {}).get("flash_interval", 0.25)
         self.flash_total = config.get("game", {}).get("flash_total", 3)
+        
+        # Score tracking
+        self.game_start_time = None
+        self.game_end_time = None
+        self.total_penalties = 0
+        self.movement_penalties = 0
+        self.lava_penalties = 0
 
         hailo_logger.info("Game state machine initialized in %s", self.current_state.value)
 
@@ -253,7 +260,9 @@ class GameStateMachine:
         """
         if track_id not in self.caught_players:
             self.caught_players.append(track_id)
-            hailo_logger.info("Player %d caught!", track_id)
+            self.movement_penalties += 1
+            self.total_penalties += 1
+            hailo_logger.info("Player %d caught! Total penalties: %d", track_id, self.total_penalties)
 
     def register_tile_violation(self, track_id: int) -> None:
         """
@@ -264,7 +273,9 @@ class GameStateMachine:
         """
         if track_id not in self.tile_violators:
             self.tile_violators.append(track_id)
-            hailo_logger.info("Player %d stepped on lava!", track_id)
+            self.lava_penalties += 1
+            self.total_penalties += 1
+            hailo_logger.info("Player %d stepped on lava! Total penalties: %d", track_id, self.total_penalties)
 
             # Trigger audio callback for lava step
             if self.audio_callback:
@@ -398,11 +409,13 @@ class GameStateMachine:
             player_data (Optional[Dict]): Current player data.
         """
         if self.current_state == GameState.GREEN_LIGHT:
-            # Check for win condition first
-            if self.tile_grid and self.tile_grid.has_reached_goal():
-                self._change_state(GameState.WIN)
-                self.state_duration = float("inf")
-                hailo_logger.info("Player reached goal! Transitioning to WIN state")
+                # Check for win condition first
+                if self.tile_grid and self.tile_grid.has_reached_goal():
+                    # Record end time
+                    self.game_end_time = time.time()
+                    self._change_state(GameState.WIN)
+                    self.state_duration = float("inf")
+                    hailo_logger.info("Player reached goal! Transitioning to WIN state")
             else:
                 # Start flashing transition
                 self._change_state(GameState.TRANSITION)
@@ -425,6 +438,13 @@ class GameStateMachine:
         self.flash_count = 0
         self.last_flash_time = 0
         self.front_tile_reached_time = None
+        
+        # Reset score tracking
+        self.game_start_time = None
+        self.game_end_time = None
+        self.total_penalties = 0
+        self.movement_penalties = 0
+        self.lava_penalties = 0
 
         # Reset tile grid
         if self.tile_grid:
@@ -438,6 +458,49 @@ class GameStateMachine:
         self._change_state(GameState.GAME_OVER)
         self.state_duration = float("inf")
         hailo_logger.info("Game ended")
+    
+    def get_game_stats(self) -> dict:
+        """
+        Get current game statistics for scoring.
+        
+        Returns:
+            dict: Game statistics including time, penalties, and score.
+        """
+        if self.game_start_time and self.game_end_time:
+            elapsed_time = self.game_end_time - self.game_start_time
+        elif self.game_start_time:
+            elapsed_time = time.time() - self.game_start_time
+        else:
+            elapsed_time = 0
+        
+        # Calculate score (higher is better)
+        # Base score: 1000 points
+        # Subtract penalties: -100 per penalty
+        # Time bonus: faster = better (subtract seconds)
+        base_score = 1000
+        penalty_deduction = self.total_penalties * 100
+        time_deduction = int(elapsed_time)
+        
+        final_score = max(0, base_score - penalty_deduction - time_deduction)
+        
+        # Determine performance rating
+        if self.total_penalties == 0:
+            rating = "PERFECT!"
+        elif self.total_penalties <= 2:
+            rating = "EXCELLENT"
+        elif self.total_penalties <= 5:
+            rating = "GOOD"
+        else:
+            rating = "COMPLETED"
+        
+        return {
+            "time": elapsed_time,
+            "total_penalties": self.total_penalties,
+            "movement_penalties": self.movement_penalties,
+            "lava_penalties": self.lava_penalties,
+            "score": final_score,
+            "rating": rating
+        }
 
     @property
     def current(self) -> GameState:

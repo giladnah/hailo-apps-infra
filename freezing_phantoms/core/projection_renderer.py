@@ -258,7 +258,7 @@ class ProjectionRenderer:
                 canvas, player_data, caught_players, frame_width, frame_height, violation_type
             )
         elif state == GameState.WIN:
-            canvas = self._render_win(canvas)
+            canvas = self._render_win(canvas, game_stats=game_stats)
         elif state == GameState.GAME_OVER:
             canvas = self._render_game_over(canvas)
 
@@ -584,12 +584,13 @@ class ProjectionRenderer:
 
         return canvas
 
-    def _render_win(self, canvas: np.ndarray) -> np.ndarray:
+    def _render_win(self, canvas: np.ndarray, game_stats: Optional[Dict] = None) -> np.ndarray:
         """
-        Render win state.
+        Render win state with score display.
 
         Args:
             canvas (np.ndarray): Canvas to render on.
+            game_stats (Optional[Dict]): Game statistics including score, time, penalties.
 
         Returns:
             np.ndarray: Rendered canvas.
@@ -597,21 +598,76 @@ class ProjectionRenderer:
         # Render tile grid at high intensity
         canvas = self._render_tile_grid(canvas, alpha=0.95)
 
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        
+        # Pulsating gold color for main text
+        pulse = int(abs(np.sin(self.frame_counter * 0.15)) * 100 + 155)
+        gold_color = (0, pulse, 255)  # Gold
+
         # Victory text - normal orientation since player is at bottom (close to camera)
         text = "YOU WIN!"
-        font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 4
         thickness = 8
 
         text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
         text_x = (canvas.shape[1] - text_size[0]) // 2
-        text_y = canvas.shape[0] - 200  # Near bottom
+        text_y = canvas.shape[0] - 400  # Higher up to make room for score
 
-        # Pulsating gold color
-        pulse = int(abs(np.sin(self.frame_counter * 0.15)) * 100 + 155)
-        color = (0, pulse, 255)  # Gold
+        cv2.putText(canvas, text, (text_x, text_y), font, font_scale, gold_color, thickness)
 
-        cv2.putText(canvas, text, (text_x, text_y), font, font_scale, color, thickness)
+        # Display score and stats if available
+        if game_stats:
+            score_y = text_y + 80
+            stats_font_scale = 1.2
+            stats_thickness = 3
+            line_spacing = 50
+            
+            # Performance rating
+            rating = game_stats.get("rating", "")
+            rating_color = (100, 255, 100) if rating in ["PERFECT!", "EXCELLENT"] else (200, 200, 200)
+            rating_size = cv2.getTextSize(rating, font, 2.0, 4)[0]
+            rating_x = (canvas.shape[1] - rating_size[0]) // 2
+            cv2.putText(canvas, rating, (rating_x, score_y), font, 2.0, rating_color, 4)
+            
+            score_y += line_spacing + 20
+            
+            # Score
+            score = game_stats.get("score", 0)
+            score_text = f"SCORE: {score}"
+            score_size = cv2.getTextSize(score_text, font, stats_font_scale, stats_thickness)[0]
+            score_x = (canvas.shape[1] - score_size[0]) // 2
+            cv2.putText(canvas, score_text, (score_x, score_y), font, stats_font_scale, (255, 255, 255), stats_thickness)
+            
+            score_y += line_spacing
+            
+            # Time
+            time_val = game_stats.get("time", 0)
+            time_text = f"Time: {time_val:.1f}s"
+            time_size = cv2.getTextSize(time_text, font, stats_font_scale, stats_thickness)[0]
+            time_x = (canvas.shape[1] - time_size[0]) // 2
+            cv2.putText(canvas, time_text, (time_x, score_y), font, stats_font_scale, (200, 200, 200), stats_thickness)
+            
+            score_y += line_spacing
+            
+            # Penalties
+            total_penalties = game_stats.get("total_penalties", 0)
+            movement_penalties = game_stats.get("movement_penalties", 0)
+            lava_penalties = game_stats.get("lava_penalties", 0)
+            
+            penalty_text = f"Penalties: {total_penalties}"
+            penalty_size = cv2.getTextSize(penalty_text, font, stats_font_scale, stats_thickness)[0]
+            penalty_x = (canvas.shape[1] - penalty_size[0]) // 2
+            penalty_color = (100, 255, 100) if total_penalties == 0 else (200, 200, 200)
+            cv2.putText(canvas, penalty_text, (penalty_x, score_y), font, stats_font_scale, penalty_color, stats_thickness)
+            
+            # Penalty breakdown (smaller text)
+            if total_penalties > 0:
+                score_y += 40
+                breakdown = f"(Movement: {movement_penalties}, Lava: {lava_penalties})"
+                breakdown_scale = 0.8
+                breakdown_size = cv2.getTextSize(breakdown, font, breakdown_scale, 2)[0]
+                breakdown_x = (canvas.shape[1] - breakdown_size[0]) // 2
+                cv2.putText(canvas, breakdown, (breakdown_x, score_y), font, breakdown_scale, (150, 150, 150), 2)
 
         # Subtitle
         subtitle = "Press R to restart"
@@ -619,7 +675,7 @@ class ProjectionRenderer:
         sub_thickness = 3
         sub_size = cv2.getTextSize(subtitle, font, sub_font_scale, sub_thickness)[0]
         sub_x = (canvas.shape[1] - sub_size[0]) // 2
-        sub_y = canvas.shape[0] - 100  # Below win text
+        sub_y = canvas.shape[0] - 50  # Near bottom
 
         cv2.putText(
             canvas, subtitle, (sub_x, sub_y), font, sub_font_scale, (200, 200, 200), sub_thickness

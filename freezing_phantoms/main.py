@@ -279,6 +279,11 @@ class FreezingPhantomsGame:
                 if self.game_state.current_state == GameState.RED_LIGHT and player_data:
                     self._check_for_movement(player_data)
 
+                # Get game stats if in WIN state
+                game_stats = None
+                if self.game_state.current_state == GameState.WIN:
+                    game_stats = self.game_state.get_game_stats()
+
                 # Render projection frame
                 projection_frame = self.renderer.render_frame(
                     state=self.game_state.current_state,
@@ -287,6 +292,7 @@ class FreezingPhantomsGame:
                     frame_width=self.camera_resolution[0],
                     frame_height=self.camera_resolution[1],
                     violation_type=self.game_state.violation_type,
+                    game_stats=game_stats,
                 )
 
                 # Display projection
