@@ -41,12 +41,10 @@ movement:
                                         # - 60px: Less sensitive (only catches larger movements)
                                         # - 80px: Very forgiving (only obvious movements)
   monitored_keypoints:                  # Body parts monitored for movement
-    - left_wrist
-    - right_wrist
-    - left_ankle
-    - right_ankle
-    - left_shoulder
-    - right_shoulder
+    - left_wrist                        # Left hand
+    - right_wrist                       # Right hand
+    - left_hip                          # Left hip
+    - right_hip                         # Right hip
   smoothing_alpha: 0.15                 # Smoothing factor (0-1, lower = more smoothing, more stable)
                                         # Lower values make detection more stable but less responsive
   pose_history_size: 8                  # Number of poses to keep for smoothing (higher = more stable)
