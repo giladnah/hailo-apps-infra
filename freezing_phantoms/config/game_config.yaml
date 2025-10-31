@@ -69,6 +69,16 @@ projector:
   resolution: [1280, 720]               # Projector resolution (should match camera)
   display_index: 1                       # Display index (0=primary, 1=secondary)
 
+# Ghost animation settings (appears during red light to build tension)
+ghost:
+  enabled: true                          # Enable ghost animation
+  image_path: "assets/ghost.png"         # Path to ghost image file
+  spawn_row: 4                           # Row where ghost spawns (last row)
+  speed: 60.0                            # Movement speed in pixels/second
+  size: 150                              # Ghost image size in pixels (width/height)
+  opacity: 0.8                           # Ghost opacity (0.0-1.0)
+  start_on_row: 3                        # Player must be on this row for ghost to appear
+
 # Calibration pattern settings
 calibration:
   pattern_rows: 6                        # Number of interior corners vertically

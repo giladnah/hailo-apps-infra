@@ -7,7 +7,7 @@ Manages automated game state transitions and timing.
 import random
 import time
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from hailo_apps.hailo_app_python.core.common.hailo_logger import get_logger
 
@@ -110,6 +110,14 @@ class GameStateMachine:
         self.current_hearts = self.starting_hearts
         self.lose_heart_on_movement = config.get("lives", {}).get("lose_heart_on_movement", True)
         self.lose_heart_on_lava = config.get("lives", {}).get("lose_heart_on_lava", False)
+
+        # Ghost animation state
+        self.ghost_enabled = config.get("ghost", {}).get("enabled", True)
+        self.ghost_active = False
+        self.ghost_position = None  # (x, y) in projector coordinates
+        self.ghost_target = None    # (x, y) target position (between player's hips)
+        self.ghost_spawn_time = None
+        self.ghost_start_on_row = config.get("ghost", {}).get("start_on_row", 3)
 
         hailo_logger.info("Game state machine initialized in %s with %d hearts",
                          self.current_state.value, self.current_hearts)
@@ -490,6 +498,12 @@ class GameStateMachine:
         # Reset hearts
         self.current_hearts = self.starting_hearts
 
+        # Reset ghost state
+        self.ghost_active = False
+        self.ghost_position = None
+        self.ghost_target = None
+        self.ghost_spawn_time = None
+
         # Reset tile grid
         if self.tile_grid:
             self.tile_grid.reset()
@@ -557,6 +571,64 @@ class GameStateMachine:
             "hearts_remaining": self.current_hearts,
             "starting_hearts": self.starting_hearts
         }
+
+    def spawn_ghost(self, spawn_position: Tuple[float, float], target_position: Tuple[float, float]) -> None:
+        """
+        Spawn ghost at specified position targeting player.
+
+        Args:
+            spawn_position (Tuple[float, float]): Initial (x, y) position in projector coordinates.
+            target_position (Tuple[float, float]): Target (x, y) position between player's hips.
+        """
+        if not self.ghost_enabled:
+            return
+
+        self.ghost_active = True
+        self.ghost_position = spawn_position
+        self.ghost_target = target_position
+        self.ghost_spawn_time = time.time()
+        hailo_logger.info("Ghost spawned at %s, targeting %s", spawn_position, target_position)
+
+    def deactivate_ghost(self) -> None:
+        """Deactivate ghost (when red light ends)."""
+        if self.ghost_active:
+            self.ghost_active = False
+            self.ghost_position = None
+            self.ghost_target = None
+            self.ghost_spawn_time = None
+            hailo_logger.debug("Ghost deactivated")
+
+    def update_ghost_position(self, new_position: Tuple[float, float]) -> None:
+        """
+        Update ghost position (called each frame to animate movement).
+
+        Args:
+            new_position (Tuple[float, float]): New (x, y) position.
+        """
+        if self.ghost_active:
+            self.ghost_position = new_position
+
+    def should_spawn_ghost(self) -> bool:
+        """
+        Check if ghost should spawn (player on specified row during red light).
+
+        Returns:
+            bool: True if conditions met for ghost spawn.
+        """
+        if not self.ghost_enabled:
+            return False
+
+        if self.current_state != GameState.RED_LIGHT:
+            return False
+
+        if self.ghost_active:
+            return False  # Already spawned
+
+        # Check if player is on the specified row
+        if self.tile_grid and self.tile_grid.player_row >= self.ghost_start_on_row:
+            return True
+
+        return False
 
     @property
     def current(self) -> GameState:

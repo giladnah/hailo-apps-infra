@@ -36,6 +36,7 @@ class ProjectionRenderer:
         tile_grid: Optional[TileGrid] = None,
         board_effects: Optional[BoardEffects] = None,
         movement_detector: Optional["MovementDetector"] = None,
+        config: Optional[Dict] = None,
     ):
         """
         Initialize projection renderer.
@@ -47,6 +48,7 @@ class ProjectionRenderer:
             tile_grid (Optional[TileGrid]): Tile grid system for game board.
             board_effects (Optional[BoardEffects]): Board visual effects.
             movement_detector (Optional[MovementDetector]): Movement detector for visualization.
+            config (Optional[Dict]): Game configuration dictionary for ghost settings.
         """
         self.H = homography_matrix
         self.projector_resolution = projector_resolution
@@ -55,6 +57,7 @@ class ProjectionRenderer:
         self.tile_grid = tile_grid
         self.board_effects = board_effects
         self.movement_detector = movement_detector
+        self.config = config or {}
 
         # Animation frame counter
         self.frame_counter = 0
@@ -62,6 +65,12 @@ class ProjectionRenderer:
         # Lava step effect
         self.lava_step_effect_time = 0
         self.lava_step_duration = 0.5  # Half second flash
+
+        # Load ghost image
+        self.ghost_image = None
+        self.ghost_config = self.config.get("ghost", {})
+        if self.ghost_config.get("enabled", True):
+            self._load_ghost_image()
 
         hailo_logger.info(
             "ProjectionRenderer initialized: %s, display=%d", projector_resolution, display_index
@@ -82,6 +91,39 @@ class ProjectionRenderer:
             cv2.moveWindow(self.window_name, 0, 0)
 
         hailo_logger.info("Created fullscreen window: %s", self.window_name)
+
+    def _load_ghost_image(self) -> None:
+        """Load ghost image from assets folder."""
+        from pathlib import Path
+
+        # Get ghost image path
+        ghost_path = self.ghost_config.get("image_path", "assets/ghost.png")
+        
+        # Resolve relative path from freezing_phantoms directory
+        base_dir = Path(__file__).parent.parent  # Go up from core/ to freezing_phantoms/
+        full_path = base_dir / ghost_path
+        
+        if not full_path.exists():
+            hailo_logger.error("Ghost image not found at: %s", full_path)
+            return
+        
+        # Load image with alpha channel (transparency)
+        self.ghost_image = cv2.imread(str(full_path), cv2.IMREAD_UNCHANGED)  # noqa: PGH003
+        
+        if self.ghost_image is None:
+            hailo_logger.error("Failed to load ghost image from: %s", full_path)
+            return
+        
+        # Resize ghost to configured size
+        ghost_size = self.ghost_config.get("size", 150)
+        self.ghost_image = cv2.resize(
+            self.ghost_image,
+            (ghost_size, ghost_size),
+            interpolation=cv2.INTER_AREA  # noqa: PGH003
+        )
+        
+        hailo_logger.info("Loaded ghost image: %dx%d from %s", 
+                         ghost_size, ghost_size, full_path)
 
     def transform_point(self, cam_x: float, cam_y: float) -> Tuple[int, int]:
         """
@@ -234,6 +276,7 @@ class ProjectionRenderer:
         game_stats: Optional[Dict] = None,
         current_hearts: int = 3,
         current_score: int = 0,
+        ghost_position: Optional[Tuple[float, float]] = None,
     ) -> np.ndarray:
         """
         Render projection frame based on game state.
@@ -245,6 +288,10 @@ class ProjectionRenderer:
             frame_width (int): Camera frame width.
             frame_height (int): Camera frame height.
             violation_type (Optional[str]): Type of violation for penalty state.
+            game_stats (Optional[Dict]): Game statistics for win screen.
+            current_hearts (int): Current number of hearts remaining.
+            current_score (int): Current score.
+            ghost_position (Optional[Tuple[float, float]]): Ghost (x, y) position in projector coordinates.
 
         Returns:
             np.ndarray: Rendered projection image.
@@ -268,7 +315,7 @@ class ProjectionRenderer:
         elif state == GameState.TRANSITION:
             canvas = self._render_transition(canvas, player_data, frame_width, frame_height)
         elif state == GameState.RED_LIGHT:
-            canvas = self._render_red_light(canvas, player_data, frame_width, frame_height)
+            canvas = self._render_red_light(canvas, player_data, frame_width, frame_height, ghost_position)
         elif state == GameState.PENALTY:
             canvas = self._render_penalty(
                 canvas, player_data, caught_players, frame_width, frame_height, violation_type
@@ -495,6 +542,7 @@ class ProjectionRenderer:
         player_data: Optional[Dict],
         frame_width: int,  # noqa: ARG002
         frame_height: int,  # noqa: ARG002
+        ghost_position: Optional[Tuple[float, float]] = None,
     ) -> np.ndarray:
         """
         Render red light state (players must freeze).
@@ -504,6 +552,7 @@ class ProjectionRenderer:
             player_data (Optional[Dict]): Player data.
             frame_width (int): Frame width.
             frame_height (int): Frame height.
+            ghost_position (Optional[Tuple[float, float]]): Ghost position if active.
 
         Returns:
             np.ndarray: Rendered canvas.
@@ -533,6 +582,10 @@ class ProjectionRenderer:
                     # Draw frozen player indicator
                     cv2.circle(canvas, (proj_x, proj_y), 30, (100, 200, 255), 3)
                     cv2.circle(canvas, (proj_x, proj_y), 5, (100, 200, 255), -1)
+
+        # Render ghost if active
+        if ghost_position is not None:
+            canvas = self._render_ghost(canvas, ghost_position)
 
         # Add "FREEZE!" text at bottom, upside down
         text = "FREEZE!"
@@ -858,6 +911,77 @@ class ProjectionRenderer:
                 label_y = proj_y - 12
                 cv2.putText(canvas, keypoint_name[:5], (proj_x - 15, label_y),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+        return canvas
+
+    def _render_ghost(self, canvas: np.ndarray, ghost_position: Tuple[float, float]) -> np.ndarray:
+        """
+        Render ghost sprite at specified position with alpha blending.
+
+        Args:
+            canvas (np.ndarray): Canvas to render on.
+            ghost_position (Tuple[float, float]): Ghost (x, y) position in projector coordinates.
+
+        Returns:
+            np.ndarray: Canvas with ghost rendered.
+        """
+        if self.ghost_image is None:
+            return canvas
+
+        ghost_x, ghost_y = int(ghost_position[0]), int(ghost_position[1])
+        ghost_h, ghost_w = self.ghost_image.shape[:2]
+
+        # Calculate top-left position (center the ghost on the target position)
+        x1 = ghost_x - ghost_w // 2
+        y1 = ghost_y - ghost_h // 2
+        x2 = x1 + ghost_w
+        y2 = y1 + ghost_h
+
+        # Clip to canvas bounds
+        canvas_h, canvas_w = canvas.shape[:2]
+        
+        # Calculate visible region
+        src_x1 = max(0, -x1)
+        src_y1 = max(0, -y1)
+        src_x2 = ghost_w - max(0, x2 - canvas_w)
+        src_y2 = ghost_h - max(0, y2 - canvas_h)
+        
+        dst_x1 = max(0, x1)
+        dst_y1 = max(0, y1)
+        dst_x2 = min(canvas_w, x2)
+        dst_y2 = min(canvas_h, y2)
+
+        # Check if ghost is visible
+        if dst_x1 >= dst_x2 or dst_y1 >= dst_y2 or src_x1 >= src_x2 or src_y1 >= src_y2:
+            return canvas
+
+        # Extract ghost region
+        ghost_region = self.ghost_image[src_y1:src_y2, src_x1:src_x2]
+        
+        # Check if ghost has alpha channel
+        if ghost_region.shape[2] == 4:
+            # Extract RGB and alpha channels
+            ghost_rgb = ghost_region[:, :, :3]
+            ghost_alpha = ghost_region[:, :, 3] / 255.0
+            
+            # Apply configured opacity
+            opacity = self.ghost_config.get("opacity", 0.8)
+            ghost_alpha = ghost_alpha * opacity
+            
+            # Expand alpha to 3 channels for blending
+            ghost_alpha_3ch = np.dstack([ghost_alpha] * 3)
+            
+            # Extract canvas region
+            canvas_region = canvas[dst_y1:dst_y2, dst_x1:dst_x2]
+            
+            # Alpha blend
+            blended = (ghost_rgb * ghost_alpha_3ch + canvas_region * (1 - ghost_alpha_3ch)).astype(np.uint8)
+            
+            # Place blended region back
+            canvas[dst_y1:dst_y2, dst_x1:dst_x2] = blended
+        else:
+            # No alpha channel, just overlay
+            canvas[dst_y1:dst_y2, dst_x1:dst_x2] = ghost_region
 
         return canvas
 

@@ -21,6 +21,7 @@ import yaml
 
 from hailo_apps.hailo_app_python.core.common.hailo_logger import get_logger
 from freezing_phantoms.calibration.calibration_tool import CalibrationTool
+from freezing_phantoms.core.audio_manager import AudioManager
 from freezing_phantoms.core.camera_utils import apply_camera_settings_from_file
 from freezing_phantoms.core.game_state import GameState, GameStateMachine
 from freezing_phantoms.core.movement_detector import MovementDetector
@@ -84,11 +85,12 @@ class FreezingPhantomsGame:
         # Initialize components
         hailo_logger.info("Initializing Red Light Green Light game...")
 
-        # Initialize tile grid
+        # Initialize tile grid (subtract UI bar height of 100px)
+        ui_bar_height = 100
         tile_config = self.config.get("tile_grid", {})
         self.tile_grid = TileGrid(
             projector_width=self.projector_resolution[0],
-            projector_height=self.projector_resolution[1],
+            projector_height=self.projector_resolution[1] - ui_bar_height,
             rows=tile_config.get("rows", 10),
             cols=tile_config.get("columns", 5),
             starting_row=tile_config.get("starting_row", 9),
@@ -122,10 +124,16 @@ class FreezingPhantomsGame:
             tile_grid=self.tile_grid,
             board_effects=self.board_effects,
             movement_detector=self.movement_detector,
+            config=self.config,
         )
 
         # Initialize game state machine
         self.game_state = GameStateMachine(self.config, tile_grid=self.tile_grid)
+
+        # Initialize audio manager
+        assets_path = Path(__file__).parent / "assets"
+        self.audio_manager = AudioManager(assets_path)
+        hailo_logger.info("Audio manager initialized")
 
         # AI pipeline (will be started later)
         self.pipeline = None
@@ -270,6 +278,15 @@ class FreezingPhantomsGame:
                 # Update game state
                 self.game_state.update(dt, player_data)
 
+                # Play audio on state change
+                if previous_state != self.game_state.current_state:
+                    # Stop freeze sound when leaving RED_LIGHT state
+                    if previous_state == GameState.RED_LIGHT:
+                        self.audio_manager.stop_freeze_sound()
+
+                    self.audio_manager.play_state_audio(self.game_state.current_state)
+                    hailo_logger.debug(f"State changed: {previous_state.value} -> {self.game_state.current_state.value}")
+
                 # When transitioning to RED_LIGHT, set reference poses for movement detection
                 if (previous_state != GameState.RED_LIGHT and
                     self.game_state.current_state == GameState.RED_LIGHT and
@@ -327,6 +344,61 @@ class FreezingPhantomsGame:
                 if self.game_state.current_state == GameState.RED_LIGHT and player_data:
                     self._check_for_movement(player_data)
 
+                # Handle ghost spawning and animation during RED_LIGHT
+                if self.game_state.current_state == GameState.RED_LIGHT:
+                    # Check if ghost should spawn
+                    if self.game_state.should_spawn_ghost() and player_data and "players" in player_data:
+                        # Get player hip position (target for ghost)
+                        player = player_data["players"][0]  # Use first player
+                        if hasattr(player, 'pose') and player.pose:
+                            # Calculate center between hips
+                            left_hip = player.pose.get("left_hip")
+                            right_hip = player.pose.get("right_hip")
+                            if left_hip and right_hip:
+                                target_x = (left_hip[0] + right_hip[0]) / 2
+                                target_y = (left_hip[1] + right_hip[1]) / 2
+                                target_proj = self.renderer.transform_point(target_x, target_y)
+                                
+                                # Get spawn position from last row center
+                                ghost_spawn_row = self.config.get("ghost", {}).get("spawn_row", 4)
+                                spawn_tile = None
+                                for tile in self.tile_grid.get_all_tiles():
+                                    if tile.row == ghost_spawn_row and tile.col == 1:  # Center column
+                                        spawn_tile = tile
+                                        break
+                                
+                                if spawn_tile:
+                                    spawn_x = spawn_tile.proj_x + spawn_tile.actual_width // 2
+                                    spawn_y = spawn_tile.proj_y + spawn_tile.actual_height // 2
+                                    self.game_state.spawn_ghost((spawn_x, spawn_y), target_proj)
+                    
+                    # Update ghost position (move towards target)
+                    if self.game_state.ghost_active and self.game_state.ghost_position and self.game_state.ghost_target:
+                        ghost_speed = self.config.get("ghost", {}).get("speed", 60.0)
+                        
+                        # Calculate direction vector
+                        dx = self.game_state.ghost_target[0] - self.game_state.ghost_position[0]
+                        dy = self.game_state.ghost_target[1] - self.game_state.ghost_position[1]
+                        distance = (dx**2 + dy**2)**0.5
+                        
+                        if distance > 1.0:  # Only move if not at target
+                            # Normalize and scale by speed * dt
+                            move_distance = ghost_speed * dt
+                            if move_distance > distance:
+                                move_distance = distance
+                            
+                            dx_norm = dx / distance
+                            dy_norm = dy / distance
+                            
+                            new_x = self.game_state.ghost_position[0] + dx_norm * move_distance
+                            new_y = self.game_state.ghost_position[1] + dy_norm * move_distance
+                            
+                            self.game_state.update_ghost_position((new_x, new_y))
+                else:
+                    # Deactivate ghost when not in RED_LIGHT
+                    if self.game_state.ghost_active:
+                        self.game_state.deactivate_ghost()
+
                 # Get game stats if in WIN state
                 game_stats = None
                 if self.game_state.current_state == GameState.WIN:
@@ -352,6 +424,7 @@ class FreezingPhantomsGame:
                     game_stats=game_stats,
                     current_hearts=self.game_state.current_hearts,
                     current_score=current_score,
+                    ghost_position=self.game_state.ghost_position,
                 )
 
                 # Display projection
@@ -578,6 +651,10 @@ class FreezingPhantomsGame:
         # Stop pipeline
         if self.pipeline:
             self.pipeline.stop()
+
+        # Clean up audio
+        if hasattr(self, 'audio_manager'):
+            self.audio_manager.cleanup()
 
         # Clean up renderer
         self.renderer.cleanup()
