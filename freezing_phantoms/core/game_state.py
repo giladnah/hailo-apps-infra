@@ -151,14 +151,13 @@ class GameStateMachine:
         current = self.current_state
 
         if current == GameState.COUNTDOWN:
-            # Countdown -> Green Light
-            self._change_state(GameState.GREEN_LIGHT)
-            self.state_duration = float("inf")  # No time limit, ends when player advances
-
-            # Store player's starting row
-            if self.tile_grid:
-                self.green_light_starting_row = self.tile_grid.player_row
-                hailo_logger.info("Green light started at row %d", self.green_light_starting_row)
+            # Countdown -> Wait for player on start square
+            # Don't auto-transition, main.py will trigger when player is ready
+            # Extend duration to wait indefinitely
+            self.state_duration = float("inf")
+            hailo_logger.debug("Countdown complete, waiting for player on start square")
+            # State stays as COUNTDOWN until player detected on start
+            return  # Don't transition yet
 
         elif current == GameState.GREEN_LIGHT:
             # This transition is now triggered manually, not by timer
