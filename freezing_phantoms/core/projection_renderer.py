@@ -54,6 +54,10 @@ class ProjectionRenderer:
 
         # Animation frame counter
         self.frame_counter = 0
+        
+        # Lava step effect
+        self.lava_step_effect_time = 0
+        self.lava_step_duration = 0.5  # Half second flash
 
         hailo_logger.info(
             "ProjectionRenderer initialized: %s, display=%d", projector_resolution, display_index
