@@ -206,8 +206,16 @@ class MovementDetector:
         # This ensures bootstrap counter keeps advancing
         if track_id not in self.pose_history_timestamped:
             self.pose_history_timestamped[track_id] = deque(maxlen=self.max_history_frames)
+            hailo_logger.debug(f"[Track {track_id}] Created new pose history with maxlen={self.max_history_frames}")
 
         self.pose_history_timestamped[track_id].append((current_time, smoothed_pose))
+        
+        # Debug: Log history size periodically
+        if len(self.pose_history_timestamped[track_id]) % 10 == 0:
+            hailo_logger.debug(
+                f"[Track {track_id}] History size: {len(self.pose_history_timestamped[track_id])}/{self.max_history_frames}, "
+                f"keypoints in latest: {len(smoothed_pose)}"
+            )
 
     def calculate_velocity(self, track_id: int) -> Tuple[float, Optional[str]]:
         """
@@ -269,7 +277,7 @@ class MovementDetector:
                 # Calculate magnitude for this frame pair
                 velocity_mag = math.sqrt(vx**2 + vy**2)
                 velocity_magnitudes.append(velocity_mag)
-                
+
                 velocities_x.append(vx)
                 velocities_y.append(vy)
 
@@ -310,15 +318,22 @@ class MovementDetector:
         # Bootstrap check: need enough history for stable velocity calculation
         # Require 1 second of smoothed data before detecting movement
         if track_id not in self.pose_history_timestamped:
+            if debug_log:
+                print(f"🚫 [Track {track_id}] No history found (bootstrap not started)")
             return False, 0.0, None
-
+        
         history = self.pose_history_timestamped[track_id]
         min_frames_for_bootstrap = int(self.fps * 1.0)  # 1 full second of data
-
+        
         if len(history) < min_frames_for_bootstrap:
             # Not enough history yet - still warming up
             if debug_log:
-                print(f"[Track {track_id}] Bootstrap: {len(history)}/{min_frames_for_bootstrap} frames (warmup - need 1s of data)")
+                # Show detailed info about history
+                oldest_time = history[0][0] if history else 0
+                newest_time = history[-1][0] if history else 0
+                time_span = newest_time - oldest_time
+                print(f"⏳ [Track {track_id}] Bootstrap: {len(history)}/{min_frames_for_bootstrap} frames | "
+                      f"Time span: {time_span:.2f}s | Max capacity: {history.maxlen}")
             return False, 0.0, None
 
         velocity, keypoint = self.calculate_velocity(track_id)
@@ -329,7 +344,8 @@ class MovementDetector:
                 f"{kp}: {math.sqrt(vx**2 + vy**2):.1f}px/s"
                 for kp, (vx, vy) in self.velocity_vectors[track_id].items()
             ])
-            print(f"[Track {track_id}] Velocities: {velocities_str} | MAX: {velocity:.1f}px/s | Threshold: {self.velocity_threshold:.1f}px/s")
+            status_emoji = "✅" if velocity <= self.velocity_threshold else "⚠️ "
+            print(f"{status_emoji} [Track {track_id}] Velocities: {velocities_str} | MAX: {velocity:.1f}px/s | Threshold: {self.velocity_threshold:.1f}px/s")
 
         # Check if velocity exceeds threshold
         if velocity > self.velocity_threshold:
@@ -346,13 +362,18 @@ class MovementDetector:
                         f"{kp}: {math.sqrt(vx**2 + vy**2):.1f}px/s"
                         for kp, (vx, vy) in self.velocity_vectors[track_id].items()
                     ])
-                    print(f"🚨 MOVEMENT DETECTED [Track {track_id}]: {velocities_str} | MAX: {keypoint}={velocity:.1f}px/s")
+                    print(f"🚨 MOVEMENT DETECTED [Track {track_id}]: {velocities_str} | MAX: {keypoint}={velocity:.1f}px/s | "
+                          f"Consecutive violations: {self.consecutive_violations[track_id]}/{self.min_consecutive_frames}")
 
-                hailo_logger.debug(
+                hailo_logger.warning(
                     "Movement detected for track %d: %s moving at %.1f px/s (threshold: %.1f px/s, %d consecutive frames)",
                     track_id, keypoint, velocity, self.velocity_threshold, self.consecutive_violations[track_id]
                 )
                 return True, velocity, keypoint
+            else:
+                # Velocity above threshold but not enough consecutive frames yet
+                if debug_log:
+                    print(f"⚠️  [Track {track_id}] Above threshold but not consecutive: {self.consecutive_violations[track_id]}/{self.min_consecutive_frames}")
         else:
             # Reset counter if below threshold
             self.consecutive_violations[track_id] = 0
