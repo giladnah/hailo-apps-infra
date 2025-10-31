@@ -35,6 +35,7 @@ class AudioManager:
         self.assets_path = assets_path / "audio"
         self.sounds = {}
         self.music_channel = None
+        self.freeze_sound_channel = None
         self.enabled = True
 
         # Initialize pygame mixer
@@ -56,6 +57,8 @@ class AudioManager:
             "freeze_sound": "freeze_sound.wav",
             "caught_buzzer": "caught_buzzer.wav",
             "game_start": "game_start.wav",
+            "win_sound": "Epic Stock Media - Undead Character - You Win.wav",
+            "lose_sound": "Epic Stock Media - Undead Character - You Lose.wav",
         }
 
         for sound_name, filename in audio_files.items():
@@ -91,8 +94,10 @@ class AudioManager:
             self.play_freeze_sound()
         elif state == GameState.PENALTY:
             self.play_caught_buzzer()
+        elif state == GameState.WIN:
+            self.play_win_sound()
         elif state == GameState.GAME_OVER:
-            self.stop_all()
+            self.play_lose_sound()
 
     def play_green_light_music(self) -> None:
         """Play green light background music (looping)."""
@@ -116,7 +121,7 @@ class AudioManager:
         self.stop_music()
 
         try:
-            self.sounds["freeze_sound"].play()
+            self.freeze_sound_channel = self.sounds["freeze_sound"].play()
             hailo_logger.debug("Playing freeze sound")
         except Exception as e:
             hailo_logger.error(f"Failed to play freeze sound: {e}")
@@ -143,17 +148,51 @@ class AudioManager:
         except Exception as e:
             hailo_logger.error(f"Failed to play game start sound: {e}")
 
+    def play_win_sound(self) -> None:
+        """Play win sound effect."""
+        if not self.enabled or "win_sound" not in self.sounds:
+            return
+
+        self.stop_all()
+
+        try:
+            self.sounds["win_sound"].play()
+            hailo_logger.debug("Playing win sound")
+        except Exception as e:
+            hailo_logger.error(f"Failed to play win sound: {e}")
+
+    def play_lose_sound(self) -> None:
+        """Play lose/game over sound effect."""
+        if not self.enabled or "lose_sound" not in self.sounds:
+            return
+
+        self.stop_all()
+
+        try:
+            self.sounds["lose_sound"].play()
+            hailo_logger.debug("Playing lose sound")
+        except Exception as e:
+            hailo_logger.error(f"Failed to play lose sound: {e}")
+
     def stop_music(self) -> None:
         """Stop background music."""
         if self.music_channel and self.music_channel.get_busy():
             self.music_channel.stop()
             hailo_logger.debug("Stopped background music")
 
+    def stop_freeze_sound(self) -> None:
+        """Stop freeze sound effect."""
+        if self.freeze_sound_channel and self.freeze_sound_channel.get_busy():
+            self.freeze_sound_channel.stop()
+            hailo_logger.debug("Stopped freeze sound")
+
     def stop_all(self) -> None:
         """Stop all audio playback."""
         if not self.enabled:
             return
 
+        self.stop_music()
+        self.stop_freeze_sound()
         pygame.mixer.stop()
         hailo_logger.debug("Stopped all audio")
 

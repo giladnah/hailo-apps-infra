@@ -14,17 +14,18 @@ Place your audio files in this directory for the Freezing Phantoms game.
 ### 2. freeze_sound.wav
 **Purpose**: "Freeze!" command sound (RED LIGHT stage)
 **Description**: Sharp, attention-grabbing sound when players must freeze
-**Duration**: 1-3 seconds
-**Format**: WAV
+**Duration**: 12 seconds
+**Format**: WAV (24-bit, 96kHz, Stereo)
 **Examples**: Witch cackle, ghost sound, sudden music stop with alarm
-**Current**: Submarine Sonar Sound Effect - Underwater Ping (creates eerie freeze atmosphere)
+**Current**: Space Launch - Scanner Sonar Radar Beeping (creates sci-fi scanning/detection atmosphere)
 
 ### 3. caught_buzzer.wav
-**Purpose**: Penalty/caught sound effect
+**Purpose**: Penalty/caught sound effect (movement detected during RED LIGHT)
 **Description**: Sound when a player is caught moving
-**Duration**: 1-2 seconds
-**Format**: WAV
+**Duration**: 2 seconds
+**Format**: WAV (24-bit, 96kHz, Stereo)
 **Examples**: Buzzer, error sound, "gotcha" sound, ghost laugh
+**Current**: Witch Spooky Laugher Cartoonish - playful Halloween penalty sound
 
 ### 4. game_start.wav
 **Purpose**: Countdown/game start sound
@@ -32,6 +33,21 @@ Place your audio files in this directory for the Freezing Phantoms game.
 **Duration**: 2-3 seconds
 **Format**: WAV
 **Examples**: "Get Ready!", countdown beeps, spooky announcement
+**Status**: ⚠️ Not yet added
+
+### 5. Epic Stock Media - Undead Character - You Win.wav
+**Purpose**: Victory sound (WIN state)
+**Description**: Sound played when player successfully reaches the goal
+**Duration**: ~2 seconds
+**Format**: WAV (24-bit, 96kHz, Stereo)
+**Current**: Epic Stock Media - Undead Character saying "You Win" ✅
+
+### 6. Epic Stock Media - Undead Character - You Lose.wav
+**Purpose**: Game over sound (GAME_OVER state)
+**Description**: Sound played when player runs out of lives
+**Duration**: ~2 seconds
+**Format**: WAV (24-bit, 96kHz, Stereo)
+**Current**: Epic Stock Media - Undead Character saying "You Lose" ✅
 
 ## Sources for Royalty-Free Sound Effects
 
@@ -76,10 +92,43 @@ python -c "from core.audio_manager import AudioManager; from pathlib import Path
 ## Current Audio Files
 
 ### freeze_sound.wav
-- **Source**: YouTube - Submarine Sonar Sound Effect - Underwater Ping
-- **URL**: https://www.youtube.com/watch?v=JCLg_jSs6Tg
+- **Artist**: Cristian Lucchetta
+- **Track**: Space Launch - Scanner Sonar Radar Beeping
 - **Added**: October 31, 2025
-- **Usage**: RED LIGHT stage - creates an eerie, underwater detection atmosphere
+- **Duration**: 12 seconds
+- **Usage**: RED LIGHT stage - creates a sci-fi scanning/detection atmosphere with radar beeping
+
+### caught_buzzer.wav
+- **Artist**: Vadi Sound
+- **Track**: Spooktacular - Witch Spooky Laugher Cartoonish
+- **Added**: October 31, 2025
+- **Duration**: 2 seconds
+- **Usage**: Penalty sound when movement is detected during RED LIGHT - playful Halloween witch laugh
+
+### Epic Stock Media - Undead Character - You Win.wav
+- **Artist**: Epic Stock Media
+- **Track**: Undead Character - You Win
+- **Added**: October 31, 2025
+- **Duration**: ~2 seconds
+- **Usage**: WIN state - played when player successfully reaches the goal
+
+### Epic Stock Media - Undead Character - You Lose.wav
+- **Artist**: Epic Stock Media
+- **Track**: Undead Character - You Lose
+- **Added**: October 31, 2025
+- **Duration**: ~2 seconds
+- **Usage**: GAME_OVER state - played when player runs out of lives
+
+## Audio System Integration
+
+The audio system is fully integrated into the game and will automatically play sounds based on game state:
+
+- **COUNTDOWN** → game_start.wav (if available)
+- **GREEN_LIGHT** → green_light_music.mp3 (loops, if available)
+- **RED_LIGHT** → freeze_sound.wav ✅
+- **PENALTY** → caught_buzzer.wav ✅
+- **WIN** → You Win.wav ✅
+- **GAME_OVER** → You Lose.wav ✅
 
 ## Notes
 
@@ -87,4 +136,6 @@ python -c "from core.audio_manager import AudioManager; from pathlib import Path
 - Check the terminal for warnings about missing audio files
 - Adjust volume in the game configuration or using system volume controls
 - Consider the age of players when selecting sound intensity (not too scary for young children)
+- The audio manager uses pygame.mixer for playback
+- Audio is cleaned up automatically when the game exits
 

@@ -939,8 +939,8 @@ class ProjectionRenderer:
 
         ghost_x, ghost_y = int(ghost_position[0]), int(ghost_position[1])
         ghost_h, ghost_w = self.ghost_image.shape[:2]
-        
-        hailo_logger.debug("👻 Rendering ghost at (%d, %d), size=%dx%d, channels=%d", 
+
+        hailo_logger.debug("👻 Rendering ghost at (%d, %d), size=%dx%d, channels=%d",
                           ghost_x, ghost_y, ghost_w, ghost_h, self.ghost_image.shape[2])
 
         # Calculate top-left position (center the ghost on the target position)

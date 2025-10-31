@@ -133,7 +133,7 @@ class TileGrid:
 
         # Calculate tile dimensions with perspective
         self.tile_width = projector_width // cols
-        
+
         # Calculate row heights with perspective scaling
         # Top rows (far from camera) are thinner, bottom rows (close) are thicker
         self.row_heights = self._calculate_perspective_row_heights(projector_height, rows)
@@ -174,11 +174,11 @@ class TileGrid:
         Returns:
             List[int]: Height in pixels for each row (index 0 = top/far, index n-1 = bottom/close).
         """
-        # Use linear perspective scaling: row 0 (top/far) = 0.7x, row n-1 (bottom/close) = 1.3x
+        # Use linear perspective scaling: row 0 (top/far) = 0.4x, row n-1 (bottom/close) = 1.4x
         # Scaling factor increases linearly from top to bottom
-        scale_min = 0.7  # Top row scale
-        scale_max = 1.3  # Bottom row scale
-        
+        scale_min = 0.4  # Top row scale (thinner first rows)
+        scale_max = 1.4  # Bottom row scale
+
         # Calculate scale for each row
         scales = []
         for row in range(num_rows):
@@ -186,17 +186,17 @@ class TileGrid:
             t = row / max(1, num_rows - 1)  # 0.0 at top, 1.0 at bottom
             scale = scale_min + (scale_max - scale_min) * t
             scales.append(scale)
-        
+
         # Calculate base height that makes total equal to total_height
         sum_scales = sum(scales)
         base_height = total_height / sum_scales
-        
+
         # Calculate actual heights
         row_heights = [int(base_height * scale) for scale in scales]
-        
+
         # Adjust last row to ensure exact total
         row_heights[-1] = total_height - sum(row_heights[:-1])
-        
+
         return row_heights
 
     def _initialize_grid(self, projector_width: int, projector_height: int) -> None:
@@ -214,7 +214,7 @@ class TileGrid:
         for row_height in self.row_heights:
             row_y_positions.append(cumulative_y)
             cumulative_y += row_height
-        
+
         for row in range(self.rows):
             for col in range(self.cols):
                 proj_x = col * self.tile_width
@@ -270,11 +270,11 @@ class TileGrid:
 
         # Mark starting row as revealed with path
         self._reveal_row(self.starting_row)
-        
+
         # Count initial green tiles
         green_count = len([t for t in self.tiles.values() if t.state == TileState.GREEN])
 
-        hailo_logger.info("Generated path with %d tiles, revealed starting row %d (%d green tiles)", 
+        hailo_logger.info("Generated path with %d tiles, revealed starting row %d (%d green tiles)",
                          len(self.path), self.starting_row, green_count)
 
     def _reveal_row(self, row: int) -> None:
@@ -338,7 +338,7 @@ class TileGrid:
             if tile.contains_point(proj_x, proj_y):
                 return tile
         return None
-    
+
     def is_position_on_board(self, proj_x: int, proj_y: int) -> bool:
         """
         Check if a position is within the game board area.
@@ -504,7 +504,7 @@ class TileGrid:
             Tile: Tile at player position.
         """
         return self.tiles[(self.player_row, self.player_col)]
-    
+
     def remove_tiles_behind_player(self) -> None:
         """
         Remove (set to RED) all green tiles behind the player's current position.
@@ -519,16 +519,16 @@ class TileGrid:
             # Moving up (towards lower row numbers)
             # Remove tiles with row > player_row (but not current row)
             rows_to_remove = [r for r in range(self.player_row + 1, self.starting_row + 1)]
-        
+
         tiles_removed = 0
         for row in rows_to_remove:
             for col in range(self.cols):
                 if (row, col) in self.tiles and self.tiles[(row, col)].state == TileState.GREEN:
                     self.tiles[(row, col)].state = TileState.RED
                     tiles_removed += 1
-        
+
         green_count_after = len(self.get_tiles_by_state(TileState.GREEN))
-        
+
         if tiles_removed > 0:
             hailo_logger.info(
                 "Removed %d green tiles behind player (row %d), %d green tiles remain",
@@ -536,7 +536,7 @@ class TileGrid:
                 self.player_row,
                 green_count_after
             )
-        
+
         # Safety check: ensure at least current revealed row has green tiles
         if green_count_after == 0:
             hailo_logger.error("ERROR: No green tiles remaining! Re-revealing current row %d", self.current_revealed_row)

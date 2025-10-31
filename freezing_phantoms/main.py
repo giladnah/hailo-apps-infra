@@ -371,7 +371,7 @@ class FreezingPhantomsGame:
                                 if spawn_tile:
                                     spawn_x = spawn_tile.proj_x + spawn_tile.actual_width // 2
                                     spawn_y = spawn_tile.proj_y + spawn_tile.actual_height // 2
-                                    hailo_logger.info("👻 Spawning ghost at (%d, %d) targeting (%d, %d)", 
+                                    hailo_logger.info("👻 Spawning ghost at (%d, %d) targeting (%d, %d)",
                                                      spawn_x, spawn_y, target_proj[0], target_proj[1])
                                     self.game_state.spawn_ghost((spawn_x, spawn_y), target_proj)
                                 else:
@@ -411,10 +411,10 @@ class FreezingPhantomsGame:
                             new_y = self.game_state.ghost_position[1] + dy_norm * move_distance
 
                             self.game_state.update_ghost_position((new_x, new_y))
-                            
+
                             # Debug log ghost position occasionally
                             if current_time - self.last_debug_time >= 2.0:
-                                hailo_logger.debug("👻 Ghost active at (%.1f, %.1f), distance to target: %.1f px", 
+                                hailo_logger.debug("👻 Ghost active at (%.1f, %.1f), distance to target: %.1f px",
                                                  new_x, new_y, distance)
                 else:
                     # Deactivate ghost when not in RED_LIGHT
