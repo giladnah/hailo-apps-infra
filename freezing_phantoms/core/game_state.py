@@ -409,13 +409,13 @@ class GameStateMachine:
             player_data (Optional[Dict]): Current player data.
         """
         if self.current_state == GameState.GREEN_LIGHT:
-                # Check for win condition first
-                if self.tile_grid and self.tile_grid.has_reached_goal():
-                    # Record end time
-                    self.game_end_time = time.time()
-                    self._change_state(GameState.WIN)
-                    self.state_duration = float("inf")
-                    hailo_logger.info("Player reached goal! Transitioning to WIN state")
+            # Check for win condition first
+            if self.tile_grid and self.tile_grid.has_reached_goal():
+                # Record end time
+                self.game_end_time = time.time()
+                self._change_state(GameState.WIN)
+                self.state_duration = float("inf")
+                hailo_logger.info("Player reached goal! Transitioning to WIN state")
             else:
                 # Start flashing transition
                 self._change_state(GameState.TRANSITION)
