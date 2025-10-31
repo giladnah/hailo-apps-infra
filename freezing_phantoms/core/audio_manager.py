@@ -159,7 +159,7 @@ class AudioManager:
         if not self.enabled:
             hailo_logger.warning("Audio not enabled, cannot play win sound")
             return
-            
+
         if "win_sound" not in self.sounds:
             hailo_logger.warning("Win sound not loaded")
             return
@@ -177,7 +177,7 @@ class AudioManager:
         if not self.enabled:
             hailo_logger.warning("Audio not enabled, cannot play lose sound")
             return
-            
+
         if "lose_sound" not in self.sounds:
             hailo_logger.warning("Lose sound not loaded")
             return

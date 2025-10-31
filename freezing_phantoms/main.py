@@ -134,7 +134,7 @@ class FreezingPhantomsGame:
         assets_path = Path(__file__).parent / "assets"
         self.audio_manager = AudioManager(assets_path)
         hailo_logger.info("Audio manager initialized")
-        
+
         # Connect audio callback to game state (CRITICAL for audio to work!)
         self.game_state.set_audio_callback(self.audio_manager.play_state_audio)
         hailo_logger.info("✅ Audio callback connected to game state")
