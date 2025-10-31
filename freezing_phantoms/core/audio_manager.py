@@ -84,7 +84,10 @@ class AudioManager:
             state (GameState): Game state to play audio for.
         """
         if not self.enabled:
+            hailo_logger.warning(f"Audio disabled, skipping audio for state: {state.value}")
             return
+
+        hailo_logger.info(f"🔊 Triggering audio for state: {state.value}")
 
         if state == GameState.COUNTDOWN:
             self.play_game_start()
@@ -127,13 +130,16 @@ class AudioManager:
             hailo_logger.error(f"Failed to play freeze sound: {e}")
 
     def play_caught_buzzer(self) -> None:
-        """Play caught/penalty sound effect."""
+        """Play caught/penalty sound effect. Stops all other audio first."""
         if not self.enabled or "caught_buzzer" not in self.sounds:
             return
 
+        # Stop all audio before playing buzzer
+        self.stop_all()
+
         try:
             self.sounds["caught_buzzer"].play()
-            hailo_logger.debug("Playing caught buzzer")
+            hailo_logger.info("🚨 Playing caught buzzer (stopped all other audio)")
         except Exception as e:
             hailo_logger.error(f"Failed to play caught buzzer: {e}")
 
@@ -150,27 +156,37 @@ class AudioManager:
 
     def play_win_sound(self) -> None:
         """Play win sound effect."""
-        if not self.enabled or "win_sound" not in self.sounds:
+        if not self.enabled:
+            hailo_logger.warning("Audio not enabled, cannot play win sound")
+            return
+            
+        if "win_sound" not in self.sounds:
+            hailo_logger.warning("Win sound not loaded")
             return
 
         self.stop_all()
 
         try:
             self.sounds["win_sound"].play()
-            hailo_logger.debug("Playing win sound")
+            hailo_logger.info("🎉 Playing WIN sound!")
         except Exception as e:
             hailo_logger.error(f"Failed to play win sound: {e}")
 
     def play_lose_sound(self) -> None:
         """Play lose/game over sound effect."""
-        if not self.enabled or "lose_sound" not in self.sounds:
+        if not self.enabled:
+            hailo_logger.warning("Audio not enabled, cannot play lose sound")
+            return
+            
+        if "lose_sound" not in self.sounds:
+            hailo_logger.warning("Lose sound not loaded")
             return
 
         self.stop_all()
 
         try:
             self.sounds["lose_sound"].play()
-            hailo_logger.debug("Playing lose sound")
+            hailo_logger.info("💀 Playing GAME OVER sound!")
         except Exception as e:
             hailo_logger.error(f"Failed to play lose sound: {e}")
 
