@@ -33,24 +33,27 @@ lava_floor:
   tile_border_color: [50, 50, 50]       # Border color (BGR format)
 
 # Movement detection settings (freeze detection during RED LIGHT)
+# Uses velocity-based detection: smooths positions first, then calculates velocity
 movement:
-  threshold_pixels: 40.0                # Movement threshold in pixels (higher = less sensitive)
-                                        # Recommended range: 20-80 pixels
-                                        # - 20px: Very sensitive (catches small movements)
-                                        # - 40px: Moderate (default, catches deliberate movements)
-                                        # - 60px: Less sensitive (only catches larger movements)
-                                        # - 80px: Very forgiving (only obvious movements)
+  velocity_threshold: 120.0             # Velocity threshold in pixels/second (higher = less sensitive)
+                                        # Recommended range: 80-200 px/s
+                                        # - 80 px/s: Very sensitive (catches slow movements)
+                                        # - 120 px/s: Moderate (default, catches deliberate movements)
+                                        # - 150 px/s: Less sensitive (only catches faster movements)
+                                        # - 200 px/s: Very forgiving (only quick movements)
   monitored_keypoints:                  # Body parts monitored for movement
     - left_wrist                        # Left hand
     - right_wrist                       # Right hand
     - left_hip                          # Left hip
     - right_hip                         # Right hip
-  smoothing_alpha: 0.15                 # Smoothing factor (0-1, lower = more smoothing, more stable)
-                                        # Lower values make detection more stable but less responsive
-  pose_history_size: 8                  # Number of poses to keep for smoothing (higher = more stable)
-  sensitivity_multiplier: 0.8           # Movement sensitivity multiplier (lower = less sensitive)
-                                        # Effective threshold = threshold_pixels * sensitivity_multiplier
+  position_smoothing_alpha: 0.2         # Position smoothing (0-1, lower = more smoothing, reduces noise)
+                                        # Lower values filter out measurement noise better
+  velocity_window_duration: 0.3         # Time window for velocity calculation (seconds)
+                                        # Longer window = more stable, shorter = more responsive
+  min_consecutive_frames: 2             # Consecutive frames above threshold required to trigger
+                                        # Higher = fewer false positives, lower = more responsive
   keypoint_confidence_threshold: 0.5    # Minimum confidence score for keypoints (0-1)
+  fps: 30.0                             # Expected frame rate for velocity calculations
 
 # Camera configuration
 camera:

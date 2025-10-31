@@ -118,12 +118,13 @@ class FreezingPhantomsGame:
         # Initialize movement detector
         movement_config = self.config.get("movement", {})
         self.movement_detector = MovementDetector(
-            threshold_pixels=movement_config.get("threshold_pixels", 20.0),
+            velocity_threshold=movement_config.get("velocity_threshold", 120.0),
             monitored_keypoints=movement_config.get("monitored_keypoints"),
-            smoothing_alpha=movement_config.get("smoothing_alpha", 0.3),
-            pose_history_size=movement_config.get("pose_history_size", 5),
-            sensitivity_multiplier=movement_config.get("sensitivity_multiplier", 1.0),
+            position_smoothing_alpha=movement_config.get("position_smoothing_alpha", 0.2),
+            velocity_window_duration=movement_config.get("velocity_window_duration", 0.3),
+            min_consecutive_frames=movement_config.get("min_consecutive_frames", 2),
             keypoint_confidence_threshold=movement_config.get("keypoint_confidence_threshold", 0.5),
+            fps=movement_config.get("fps", 30.0),
         )
 
         # AI pipeline (will be started later)
@@ -527,6 +528,7 @@ class FreezingPhantomsGame:
     def _check_for_movement(self, player_data: dict) -> None:
         """
         Check for player movement during red light phase.
+        Uses velocity-based detection (tracks current velocity, not displacement from frozen pose).
 
         Args:
             player_data (dict): Current player data from pipeline.
@@ -534,22 +536,18 @@ class FreezingPhantomsGame:
         if not player_data or "players" not in player_data:
             return
 
-        frozen_poses = self.game_state.get_frozen_poses()
-        if not frozen_poses:
-            return
-
         current_players = player_data["players"]
-        movement_results = self.movement_detector.detect_player_movement(
-            frozen_poses, current_players
-        )
+        
+        # New API: just pass current players, detector tracks velocity internally
+        movement_results = self.movement_detector.detect_player_movement(current_players)
 
-        for track_id, (moved, displacement, keypoint) in movement_results.items():
+        for track_id, (moved, velocity, keypoint) in movement_results.items():
             if moved:
                 hailo_logger.warning(
-                    "Player %d moved during red light! %s displaced %.1fpx",
+                    "Player %d moved during red light! %s velocity: %.1f px/s",
                     track_id,
                     keypoint,
-                    displacement,
+                    velocity,
                 )
                 self.game_state.register_caught_player(track_id)
 
