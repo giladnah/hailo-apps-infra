@@ -260,7 +260,6 @@ class FreezingPhantomsGame:
                 self.game_state.update(dt, player_data)
                 
                 # Print periodic debug info about tracked player (every 2 seconds)
-                current_time = time.time()
                 if current_time - self.last_debug_time >= 2.0:
                     self._print_player_debug_info(player_data)
                     self.last_debug_time = current_time
@@ -368,7 +367,7 @@ class FreezingPhantomsGame:
                 if self.tile_grid.is_position_on_board(proj_x, proj_y):
                     players_on_board.append(player)
                     # Update active player ID (use the first player on board)
-                    if self.active_player_id is None or self.active_player_id != player.track_id:
+                    if not hasattr(self, 'active_player_id') or self.active_player_id is None or self.active_player_id != player.track_id:
                         self.active_player_id = player.track_id
                         hailo_logger.info("🎯 Now tracking player ID: %d (on board)", player.track_id)
 
