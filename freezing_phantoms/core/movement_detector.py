@@ -212,7 +212,7 @@ class MovementDetector:
 
     def calculate_velocity(self, track_id: int) -> Tuple[float, Optional[str]]:
         """
-        Calculate current velocity over rolling time window.
+        Calculate current velocity by averaging consecutive frame velocities.
         Stage 2: Calculate velocity from smoothed positions.
 
         Args:
@@ -238,37 +238,52 @@ class MovementDetector:
         if len(window_poses) < 2:
             return 0.0, None
 
-        # Calculate velocity for each keypoint
+        # Calculate average velocity for each keypoint over consecutive frames
         max_velocity = 0.0
         max_keypoint = None
         velocity_dict = {}
 
-        t_start, pose_start = window_poses[0]
-        t_end, pose_end = window_poses[-1]
-        time_delta = t_end - t_start
-
-        if time_delta < 0.01:  # Avoid division by zero
-            return 0.0, None
-
         for keypoint_name in self.monitored_keypoints:
-            if keypoint_name in pose_start and keypoint_name in pose_end:
-                x0, y0 = pose_start[keypoint_name]
-                x1, y1 = pose_end[keypoint_name]
-
-                # Calculate displacement and velocity
-                dx = x1 - x0
-                dy = y1 - y0
-                displacement = math.sqrt(dx**2 + dy**2)
-                velocity = displacement / time_delta  # pixels/second
-
-                # Store velocity vector for visualization
-                vx = dx / time_delta
-                vy = dy / time_delta
-                velocity_dict[keypoint_name] = (vx, vy)
-
-                if velocity > max_velocity:
-                    max_velocity = velocity
-                    max_keypoint = keypoint_name
+            # Collect velocities between consecutive frames
+            velocities_x = []
+            velocities_y = []
+            
+            for i in range(len(window_poses) - 1):
+                t0, pose0 = window_poses[i]
+                t1, pose1 = window_poses[i + 1]
+                
+                if keypoint_name not in pose0 or keypoint_name not in pose1:
+                    continue
+                
+                time_delta = t1 - t0
+                if time_delta < 0.001:  # Skip if frames too close
+                    continue
+                
+                x0, y0 = pose0[keypoint_name]
+                x1, y1 = pose1[keypoint_name]
+                
+                # Calculate instantaneous velocity
+                vx = (x1 - x0) / time_delta
+                vy = (y1 - y0) / time_delta
+                
+                velocities_x.append(vx)
+                velocities_y.append(vy)
+            
+            if not velocities_x:
+                continue
+            
+            # Average the velocities
+            avg_vx = sum(velocities_x) / len(velocities_x)
+            avg_vy = sum(velocities_y) / len(velocities_y)
+            
+            # Calculate magnitude
+            velocity_magnitude = math.sqrt(avg_vx**2 + avg_vy**2)
+            
+            velocity_dict[keypoint_name] = (avg_vx, avg_vy)
+            
+            if velocity_magnitude > max_velocity:
+                max_velocity = velocity_magnitude
+                max_keypoint = keypoint_name
 
         # Cache velocity vectors for visualization
         if track_id not in self.velocity_vectors:
@@ -290,20 +305,21 @@ class MovementDetector:
             Tuple[bool, float, Optional[str]]: (movement_detected, velocity, keypoint_name)
         """
         # Bootstrap check: need enough history for stable velocity calculation
+        # Require 1 second of smoothed data before detecting movement
         if track_id not in self.pose_history_timestamped:
             return False, 0.0, None
         
         history = self.pose_history_timestamped[track_id]
-        min_frames_for_bootstrap = int(self.fps * self.velocity_window_duration) + 2
+        min_frames_for_bootstrap = int(self.fps * 1.0)  # 1 full second of data
         
         if len(history) < min_frames_for_bootstrap:
             # Not enough history yet - still warming up
             if debug_log:
-                print(f"[Track {track_id}] Bootstrap: {len(history)}/{min_frames_for_bootstrap} frames (warmup)")
+                print(f"[Track {track_id}] Bootstrap: {len(history)}/{min_frames_for_bootstrap} frames (warmup - need 1s of data)")
             return False, 0.0, None
-        
+
         velocity, keypoint = self.calculate_velocity(track_id)
-        
+
         # Debug logging: dump all keypoint velocities
         if debug_log and track_id in self.velocity_vectors:
             velocities_str = " | ".join([
@@ -311,7 +327,7 @@ class MovementDetector:
                 for kp, (vx, vy) in self.velocity_vectors[track_id].items()
             ])
             print(f"[Track {track_id}] Velocities: {velocities_str} | MAX: {velocity:.1f}px/s | Threshold: {self.velocity_threshold:.1f}px/s")
-        
+
         # Check if velocity exceeds threshold
         if velocity > self.velocity_threshold:
             # Increment consecutive violations
