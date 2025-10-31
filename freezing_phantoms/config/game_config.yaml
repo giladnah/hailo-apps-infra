@@ -77,7 +77,7 @@ ghost:
   speed: 60.0                            # Movement speed in pixels/second
   size: 150                              # Ghost image size in pixels (width/height)
   opacity: 0.8                           # Ghost opacity (0.0-1.0)
-  start_on_row: 3                        # Player must be on this row for ghost to appear
+  start_on_row: 0                        # Player must be on this row for ghost to appear (0=always appear)
 
 # Calibration pattern settings
 calibration:

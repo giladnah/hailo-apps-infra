@@ -69,8 +69,14 @@ class ProjectionRenderer:
         # Load ghost image
         self.ghost_image = None
         self.ghost_config = self.config.get("ghost", {})
-        if self.ghost_config.get("enabled", True):
+        ghost_enabled = self.ghost_config.get("enabled", True)
+        hailo_logger.info("Ghost config: enabled=%s, config=%s", ghost_enabled, self.ghost_config)
+        if ghost_enabled:
             self._load_ghost_image()
+            if self.ghost_image is not None:
+                hailo_logger.info("✅ Ghost image loaded successfully: shape=%s", self.ghost_image.shape)
+            else:
+                hailo_logger.error("❌ Ghost image failed to load!")
 
         hailo_logger.info(
             "ProjectionRenderer initialized: %s, display=%d", projector_resolution, display_index
@@ -928,10 +934,14 @@ class ProjectionRenderer:
             np.ndarray: Canvas with ghost rendered.
         """
         if self.ghost_image is None:
+            hailo_logger.warning("👻 _render_ghost called but ghost_image is None!")
             return canvas
 
         ghost_x, ghost_y = int(ghost_position[0]), int(ghost_position[1])
         ghost_h, ghost_w = self.ghost_image.shape[:2]
+        
+        hailo_logger.debug("👻 Rendering ghost at (%d, %d), size=%dx%d, channels=%d", 
+                          ghost_x, ghost_y, ghost_w, ghost_h, self.ghost_image.shape[2])
 
         # Calculate top-left position (center the ghost on the target position)
         x1 = ghost_x - ghost_w // 2
