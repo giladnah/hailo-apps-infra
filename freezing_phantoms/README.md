@@ -2,6 +2,41 @@
 
 An AI-powered "Red Light, Green Light" game with floor-is-lava theme using Hailo AI for real-time player tracking and projection mapping.
 
+## 🎯 Spatial Layout (CRITICAL - READ FIRST!)
+
+**The projector projects onto the FLOOR from above:**
+
+```
+PROJECTOR (ceiling/mount)
+     |
+     ↓ projection onto floor
+═══════════════════════════════════
+║ TOP OF IMAGE (row 0)            ║  ← FAR from projector
+║ - Player STARTS here            ║  ← Player faces toward projector
+║ - Furthest point from projector ║
+║                                 ║
+║   ↓ Player moves DOWN (closer)  ║
+║                                 ║
+║ BOTTOM OF IMAGE (row 5)         ║  ← NEAR projector
+║ - Player ENDS here (GOAL)       ║  ← Closest to projector
+║ - UI BAR here (visible)         ║  ← Bottom = near player
+║ ▲▲▲▲▲ | [GO!] | Score: 987    ║  ← Upside down text
+═══════════════════════════════════
+        FLOOR SURFACE
+
+Player Position: Stands beyond bottom edge, looks DOWN at floor
+               - Starts at top of projection (far away)
+               - Moves toward bottom (toward projector)
+               - All text/UI upside down (facing player)
+```
+
+**Key Spatial Facts:**
+- **TOP pixels (row 0)** = Starting position = FAR from projector
+- **BOTTOM pixels (row 5)** = Goal position = NEAR projector  
+- **UI Bar** = Bottom of image = Where player stands
+- **Text orientation** = Upside down (180° rotation) for player readability
+- **Player movement** = Top → Bottom = Far → Near = Away → Toward projector
+
 ## Overview
 
 "Freezing Phantoms" is an interactive projection-mapped game based on the classic "Red Light, Green Light". Players navigate a 5x10 tile grid projected on the floor, avoiding red lava tiles while racing to the goal. The game uses Hailo AI for real-time pose estimation to track player position and detect movement during freeze phases.
