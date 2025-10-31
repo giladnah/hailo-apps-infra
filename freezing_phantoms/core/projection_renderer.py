@@ -275,9 +275,10 @@ class ProjectionRenderer:
         elif state == GameState.GAME_OVER:
             canvas = self._render_game_over(canvas)
         
-        # Render single UI bar at top (closest to projector) LAST so it overlays everything
+        # Render single UI bar at BOTTOM (closest to projector/player) LAST so it overlays everything
+        # SPATIAL LAYOUT: Top pixels = far from projector (start), Bottom pixels = near projector (goal)
         # Contains: hearts (left), announcement (center), score (right) - all upside down
-        canvas = self._render_ui_bar_top(canvas, state, current_hearts, current_score)
+        canvas = self._render_ui_bar_bottom(canvas, state, current_hearts, current_score)
 
         return canvas
 
@@ -705,12 +706,18 @@ class ProjectionRenderer:
 
         return canvas
 
-    def _render_ui_bar_top(
+    def _render_ui_bar_bottom(
         self, canvas: np.ndarray, state: GameState, current_hearts: int, current_score: int
     ) -> np.ndarray:
         """
-        Render single UI bar at top (closest to projector) with all game information,
+        Render single UI bar at BOTTOM (closest to projector/player) with all game information,
         all facing the player (upside down).
+        
+        SPATIAL LAYOUT:
+        - Top of image (row 0) = FAR from projector = Player starts here
+        - Bottom of image (row 5) = NEAR projector = Goal, where UI bar is
+        - Player stands beyond bottom edge, looking down at floor projection
+        
         Layout: Hearts (left) | Announcement (center) | Score (right)
 
         Args:
@@ -722,19 +729,20 @@ class ProjectionRenderer:
         Returns:
             np.ndarray: Canvas with UI bar rendered.
         """
+        height = canvas.shape[0]
         width = canvas.shape[1]
         bar_height = 100  # Single bar height
-        bar_y_end = bar_height  # Position at top
+        bar_y_start = height - bar_height  # Position at BOTTOM
 
-        # Semi-transparent dark bar at top
+        # Semi-transparent dark bar at bottom
         overlay = canvas.copy()
-        cv2.rectangle(overlay, (0, 0), (width, bar_y_end), (20, 20, 20), -1)
+        cv2.rectangle(overlay, (0, bar_y_start), (width, height), (20, 20, 20), -1)
         cv2.addWeighted(overlay, 0.9, canvas, 0.1, 0, canvas)
 
         font = cv2.FONT_HERSHEY_SIMPLEX
 
         # === HEARTS (left side, upside down) ===
-        hearts_y = 50  # Centered in bar
+        hearts_y = bar_y_start + 50  # Centered in bar
         heart_spacing = 50
         hearts_start_x = 50  # Left side
 
@@ -790,7 +798,7 @@ class ProjectionRenderer:
         if message:
             # Render upside down text in center
             canvas = self._render_upside_down_text(
-                canvas, message, None, bar_y_end - 30, color, 1.5, 3, centered=True
+                canvas, message, None, bar_y_start + 70, color, 1.5, 3, centered=True
             )
 
         # === SCORE (right side, upside down) ===
@@ -798,7 +806,7 @@ class ProjectionRenderer:
         score_size = cv2.getTextSize(score_text, font, 1.2, 3)[0]
         score_x = width - score_size[0] - 50
         canvas = self._render_upside_down_text(
-            canvas, score_text, score_x, 60, (255, 255, 255), 1.2, 3, centered=False
+            canvas, score_text, score_x, bar_y_start + 60, (255, 255, 255), 1.2, 3, centered=False
         )
 
         return canvas
