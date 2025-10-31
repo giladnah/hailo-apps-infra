@@ -243,9 +243,14 @@ class FreezingPhantomsGame:
                 # Get latest player data from pipeline
                 player_data = None
                 if self.pipeline:
-                    player_data = self.pipeline.get_latest_data(timeout=0.01)
-                    if player_data:
-                        hailo_logger.debug("Got player data: %d players", len(player_data.get('players', [])))
+                    all_player_data = self.pipeline.get_latest_data(timeout=0.01)
+                    if all_player_data:
+                        # Filter to only include players on the game board
+                        player_data = self._filter_players_on_board(all_player_data)
+                        if player_data:
+                            hailo_logger.debug("Got player data: %d players (filtered from %d total)", 
+                                             len(player_data.get('players', [])),
+                                             len(all_player_data.get('players', [])))
 
                 # Update game state
                 self.game_state.update(dt, player_data)
@@ -336,12 +341,71 @@ class FreezingPhantomsGame:
         finally:
             self.cleanup()
 
+    def _filter_players_on_board(self, all_player_data: dict) -> Optional[dict]:
+        """
+        Filter player data to only include players on the game board.
+
+        Args:
+            all_player_data (dict): All player data from pipeline.
+
+        Returns:
+            Optional[dict]: Filtered player data with only players on board, or None.
+        """
+        if "players" not in all_player_data or not all_player_data["players"]:
+            return None
+
+        players_on_board = []
+        for player in all_player_data["players"]:
+            if hasattr(player, 'leg_position') and player.leg_position:
+                leg_x, leg_y = player.leg_position
+                proj_x, proj_y = self.renderer.transform_point(leg_x, leg_y)
+
+                # Check if player is on the game board
+                if self.tile_grid.is_position_on_board(proj_x, proj_y):
+                    players_on_board.append(player)
+                    # Update active player ID (use the first player on board)
+                    if self.active_player_id is None or self.active_player_id != player.track_id:
+                        self.active_player_id = player.track_id
+                        hailo_logger.info("🎯 Now tracking player ID: %d (on board)", player.track_id)
+
+        if not players_on_board:
+            return None
+
+        # Return filtered data with same structure
+        return {
+            "players": players_on_board,
+            "frame_id": all_player_data.get("frame_id", 0),
+        }
+
+    def _print_player_debug_info(self, player_data: Optional[dict]) -> None:
+        """
+        Print debug information about currently tracked player.
+
+        Args:
+            player_data (Optional[dict]): Current player data.
+        """
+        if player_data and "players" in player_data and player_data["players"]:
+            player = player_data["players"][0]  # Primary tracked player
+            if hasattr(player, 'leg_position') and player.leg_position:
+                leg_x, leg_y = player.leg_position
+                proj_x, proj_y = self.renderer.transform_point(leg_x, leg_y)
+                current_tile = self.tile_grid.get_player_current_tile((proj_x, proj_y))
+                
+                tile_info = f"Row {current_tile.row}, Col {current_tile.col}" if current_tile else "No tile"
+                tile_state = current_tile.state.value if current_tile else "N/A"
+                
+                print(f"👤 Player ID: {player.track_id} | Position: ({proj_x}, {proj_y}) | "
+                      f"Tile: {tile_info} | State: {tile_state} | "
+                      f"Game Row: {self.tile_grid.player_row}/{self.tile_grid.current_revealed_row}")
+        elif self.active_player_id is not None:
+            print(f"⚠️  No player currently on board (last tracked: {self.active_player_id})")
+
     def _check_tile_violations(self, player_data: dict) -> None:
         """
         Check if player stepped on a red tile during green light.
 
         Args:
-            player_data (dict): Current player data from pipeline.
+            player_data (dict): Player data from pipeline (already filtered to board players).
         """
         if not player_data or "players" not in player_data:
             return
@@ -361,7 +425,7 @@ class FreezingPhantomsGame:
                     self.game_state.register_tile_violation(player.track_id)
                     # Trigger visual effect
                     self.renderer.trigger_lava_step_effect()
-                    print("🔥 LAVA! Player stepped on red tile!")
+                    print(f"🔥 LAVA! Player {player.track_id} stepped on red tile!")
 
     def _check_for_movement(self, player_data: dict) -> None:
         """
