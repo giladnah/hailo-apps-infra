@@ -19,6 +19,12 @@ tile_grid:
   penalty_rows_back: 2                  # Rows to move back on penalty
   path_width: 1                         # Number of safe tiles per row
   obstacle_density: 0.3                 # Percentage of non-path tiles that are red lava (0.0-1.0)
+  
+# Lives system
+lives:
+  starting_hearts: 3                    # Number of lives player starts with
+  lose_heart_on_movement: true          # Lose heart when moving during red light
+  lose_heart_on_lava: false             # Don't lose heart for lava (just move back)
 
 # Lava floor visual settings
 lava_floor:
