@@ -138,39 +138,47 @@ class ProjectionRenderer:
         self,
         canvas: np.ndarray,
         text: str,
-        font: int,
-        font_scale: float,
+        x: Optional[int],
+        y: int,
         color: Tuple[int, int, int],
-        thickness: int,
-        y_offset: int = 100,
+        font_scale: float = 2.0,
+        thickness: int = 4,
+        centered: bool = False,
     ) -> np.ndarray:
         """
-        Render text upside down at the bottom of the canvas.
+        Render text upside down (rotated 180 degrees) for player viewing.
 
         Args:
             canvas (np.ndarray): Canvas to render on.
             text (str): Text to render.
-            font (int): Font type.
+            x (Optional[int]): X coordinate (bottom-left of text), None if centered.
+            y (int): Y coordinate (bottom-left of text).
+            color (Tuple[int, int, int]): Text color (BGR).
             font_scale (float): Font scale.
-            color (Tuple[int, int, int]): Text color.
             thickness (int): Text thickness.
-            y_offset (int): Offset from bottom edge.
+            centered (bool): If True, center text horizontally (x is ignored).
 
         Returns:
-            np.ndarray: Canvas with text rendered.
+            np.ndarray: Canvas with upside-down text rendered.
         """
-        # Get text size
-        text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        # Get text dimensions
+        text_size, _ = cv2.getTextSize(text, font, font_scale, thickness)
         text_width, text_height = text_size
+        
+        # Calculate x position if centered
+        if centered:
+            x = (canvas.shape[1] - text_width) // 2
 
-        # Create temporary image for text
-        text_img = np.zeros((text_height + 20, text_width + 20, 3), dtype=np.uint8)
+        # Create a temporary image for the text
+        text_img = np.zeros((text_height + 10, text_width + 10, 3), dtype=np.uint8)
 
-        # Draw text on temporary image
+        # Render text on temporary image
         cv2.putText(
             text_img,
             text,
-            (10, text_height + 5),
+            (5, text_height + 2),
             font,
             font_scale,
             color,
@@ -180,28 +188,30 @@ class ProjectionRenderer:
         # Rotate 180 degrees
         text_img_rotated = cv2.rotate(text_img, cv2.ROTATE_180)
 
-        # Calculate position at bottom center
-        img_h, img_w = text_img_rotated.shape[:2]
-        x_pos = (canvas.shape[1] - img_w) // 2
-        y_pos = canvas.shape[0] - y_offset - img_h
+        # Calculate position to place the rotated text
+        y_start = y - text_height - 10
+        y_end = y
+        x_end = x + text_width + 10
 
-        # Ensure position is within bounds
-        if y_pos < 0:
-            y_pos = 0
-        if x_pos < 0:
-            x_pos = 0
+        # Ensure coordinates are within bounds
+        y_start = max(0, y_start)
+        y_end = min(canvas.shape[0], y_end)
+        x_end = min(canvas.shape[1], x_end)
 
-        # Calculate actual region to paste
-        end_y = min(y_pos + img_h, canvas.shape[0])
-        end_x = min(x_pos + img_w, canvas.shape[1])
-        actual_h = end_y - y_pos
-        actual_w = end_x - x_pos
+        # Overlay the rotated text onto the canvas
+        roi_height = y_end - y_start
+        roi_width = x_end - x
+        if roi_height > 0 and roi_width > 0:
+            text_img_rotated_cropped = text_img_rotated[:roi_height, :roi_width]
+            # Blend text (only where text exists)
+            mask = cv2.cvtColor(text_img_rotated_cropped, cv2.COLOR_BGR2GRAY)
+            _, mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
+            mask_inv = cv2.bitwise_not(mask)
 
-        # Overlay text on canvas where it's not black
-        if actual_h > 0 and actual_w > 0:
-            text_region = text_img_rotated[:actual_h, :actual_w]
-            mask = np.any(text_region > 0, axis=2)
-            canvas[y_pos:end_y, x_pos:end_x][mask] = text_region[mask]
+            roi = canvas[y_start:y_end, x:x_end]
+            bg = cv2.bitwise_and(roi, roi, mask=mask_inv)
+            fg = cv2.bitwise_and(text_img_rotated_cropped, text_img_rotated_cropped, mask=mask)
+            canvas[y_start:y_end, x:x_end] = cv2.add(bg, fg)
 
         return canvas
 
@@ -368,8 +378,9 @@ class ProjectionRenderer:
         color = (pulse, pulse, 0)  # Cyan
 
         # Render text upside down at bottom
+        y_pos = canvas.shape[0] - 100  # 100px from bottom
         canvas = self._render_upside_down_text(
-            canvas, text, font, font_scale, color, thickness, y_offset=100
+            canvas, text, None, y_pos, color, font_scale, thickness, centered=True
         )
 
         # Highlight starting position
@@ -521,8 +532,9 @@ class ProjectionRenderer:
         font_scale = 2
         thickness = 4
 
+        y_pos = canvas.shape[0] - 80  # 80px from bottom
         canvas = self._render_upside_down_text(
-            canvas, text, font, font_scale, (0, 0, 255), thickness, y_offset=80
+            canvas, text, None, y_pos, (0, 0, 255), font_scale, thickness, centered=True
         )
 
         return canvas
@@ -570,8 +582,9 @@ class ProjectionRenderer:
         # Pulsating red color
         pulse = int(abs(np.sin(self.frame_counter * 0.2)) * 100 + 155)
 
+        y_pos = canvas.shape[0] - 80  # 80px from bottom
         canvas = self._render_upside_down_text(
-            canvas, message, font, font_scale, (0, 0, pulse), thickness, y_offset=80
+            canvas, message, None, y_pos, (0, 0, pulse), font_scale, thickness, centered=True
         )
 
         # Show player indicator
