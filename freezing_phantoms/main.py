@@ -139,6 +139,13 @@ class FreezingPhantomsGame:
         # Active player tracking
         self.active_player_id = None  # Track ID of player currently on board
         self.last_debug_time = 0  # For periodic debug output
+        
+        # Lava step tracking (delay before counting as violation)
+        self.lava_step_start_time = {}  # track_id -> time when first stepped on lava
+        self.lava_step_delay = 1.5  # seconds to wait before counting as violation
+        
+        # Game start tracking
+        self.player_on_start_square = False  # Wait for player to reach start before monitoring
 
         hailo_logger.info("Game initialization complete")
 
@@ -258,13 +265,29 @@ class FreezingPhantomsGame:
 
                 # Update game state
                 self.game_state.update(dt, player_data)
-
+                
+                # If in countdown, wait for player to be on start square
+                if self.game_state.current_state == GameState.COUNTDOWN:
+                    if player_data and self._check_player_on_start_square(player_data):
+                        if not self.player_on_start_square:
+                            self.player_on_start_square = True
+                            hailo_logger.info("Player on start square, starting game!")
+                            print("✅ Player ready! Starting game...")
+                            # Start game timer
+                            if self.game_state.game_start_time is None:
+                                self.game_state.game_start_time = time.time()
+                            # Manually transition to GREEN_LIGHT
+                            self.game_state._change_state(GameState.GREEN_LIGHT)
+                            self.game_state.state_duration = float("inf")
+                            if self.game_state.tile_grid:
+                                self.game_state.green_light_starting_row = self.game_state.tile_grid.player_row
+                
                 # Print periodic debug info about tracked player (every 2 seconds)
                 if current_time - self.last_debug_time >= 2.0:
                     self._print_player_debug_info(player_data)
                     self.last_debug_time = current_time
 
-                # Check for tile violations during GREEN_LIGHT
+                # Check for tile violations during GREEN_LIGHT (only after player started)
                 if self.game_state.current_state == GameState.GREEN_LIGHT and player_data:
                     self._check_tile_violations(player_data)
 
@@ -318,7 +341,9 @@ class FreezingPhantomsGame:
                     elif key in ('r', 'R'):
                         hailo_logger.info("R pressed, restarting game")
                         self.game_state.reset()
-                        print("\n♻️  Game restarted!\n")
+                        self.player_on_start_square = False  # Reset start square flag
+                        self.lava_step_start_time.clear()  # Clear lava timers
+                        print("\n♻️  Game restarted! Stand on green tile to begin.\n")
 
                     # Sensitivity controls for freeze detection
                     elif key in ('+', '='):
@@ -422,16 +447,45 @@ class FreezingPhantomsGame:
                       f"Green tiles: {green_count}")
         elif self.active_player_id is not None:
             print(f"⚠️  No player currently on board (last tracked: {self.active_player_id})")
+    
+    def _check_player_on_start_square(self, player_data: dict) -> bool:
+        """
+        Check if player is standing on a green tile in the starting row.
+
+        Args:
+            player_data (dict): Player data from pipeline.
+
+        Returns:
+            bool: True if player is on a green tile in starting row.
+        """
+        if not player_data or "players" not in player_data:
+            return False
+
+        for player in player_data["players"]:
+            if hasattr(player, 'leg_position') and player.leg_position:
+                leg_x, leg_y = player.leg_position
+                proj_x, proj_y = self.renderer.transform_point(leg_x, leg_y)
+                current_tile = self.tile_grid.get_player_current_tile((proj_x, proj_y))
+                
+                # Check if on starting row and on a green tile
+                if current_tile and current_tile.row == self.tile_grid.starting_row:
+                    if current_tile.state == TileState.GREEN:
+                        return True
+        
+        return False
 
     def _check_tile_violations(self, player_data: dict) -> None:
         """
         Check if player stepped on a red tile during green light.
+        Only triggers after being on lava for 1.5 seconds.
 
         Args:
             player_data (dict): Player data from pipeline (already filtered to board players).
         """
         if not player_data or "players" not in player_data:
             return
+
+        current_time = time.time()
 
         for player in player_data["players"]:
             # Get leg position
@@ -442,13 +496,33 @@ class FreezingPhantomsGame:
 
                 # Get tile at position
                 current_tile = self.tile_grid.get_player_current_tile((proj_x, proj_y))
+                track_id = player.track_id
 
                 if current_tile and self.tile_grid.is_tile_dangerous(current_tile):
-                    hailo_logger.warning("Player %d stepped on lava tile!", player.track_id)
-                    self.game_state.register_tile_violation(player.track_id)
-                    # Trigger visual effect
-                    self.renderer.trigger_lava_step_effect()
-                    print(f"🔥 LAVA! Player {player.track_id} stepped on red tile!")
+                    # Player is on lava
+                    if track_id not in self.lava_step_start_time:
+                        # First time stepping on lava, start timer
+                        self.lava_step_start_time[track_id] = current_time
+                        hailo_logger.debug("Player %d stepped on lava, starting %ss timer", 
+                                          track_id, self.lava_step_delay)
+                    else:
+                        # Check if enough time has passed
+                        elapsed = current_time - self.lava_step_start_time[track_id]
+                        if elapsed >= self.lava_step_delay:
+                            # Trigger violation
+                            hailo_logger.warning("Player %d on lava for %.1fs - violation!", 
+                                                track_id, elapsed)
+                            self.game_state.register_tile_violation(track_id)
+                            # Trigger visual effect
+                            self.renderer.trigger_lava_step_effect()
+                            print(f"🔥 LAVA! Player {track_id} on red tile too long!")
+                            # Reset timer
+                            del self.lava_step_start_time[track_id]
+                else:
+                    # Player is on safe tile, reset lava timer if exists
+                    if track_id in self.lava_step_start_time:
+                        hailo_logger.debug("Player %d moved off lava, resetting timer", track_id)
+                        del self.lava_step_start_time[track_id]
 
     def _check_for_movement(self, player_data: dict) -> None:
         """

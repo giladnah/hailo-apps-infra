@@ -248,8 +248,8 @@ class ProjectionRenderer:
             dtype=np.uint8,
         )
         
-        # Render UI bar at bottom (last ~100 pixels reserved for text/score)
-        canvas = self._render_ui_bar(canvas, state, current_hearts, current_score)
+        # First render hearts at TOP of screen
+        canvas = self._render_hearts_top(canvas, current_hearts)
 
         if state == GameState.COUNTDOWN:
             canvas = self._render_countdown(canvas)
@@ -267,6 +267,9 @@ class ProjectionRenderer:
             canvas = self._render_win(canvas, game_stats=game_stats)
         elif state == GameState.GAME_OVER:
             canvas = self._render_game_over(canvas)
+        
+        # Render UI bar at bottom LAST so it overlays everything
+        canvas = self._render_ui_bar_bottom(canvas, state, current_score)
 
         return canvas
 
@@ -316,14 +319,16 @@ class ProjectionRenderer:
             )
             cv2.addWeighted(overlay, alpha, canvas, 1 - alpha, 0, canvas)
 
-            # Draw tile border
-            cv2.rectangle(
-                canvas,
-                (tile.proj_x, tile.proj_y),
-                (tile.proj_x + tile.proj_width, tile.proj_y + tile.proj_height),
-                (50, 50, 50),
-                2,
-            )
+            # Draw tile border (skip bottom tiles to avoid yellow edges from UI bar overlap)
+            # Only draw borders for tiles not in the bottom row
+            if tile.row < (self.tile_grid.rows - 1):  # Skip last row
+                cv2.rectangle(
+                    canvas,
+                    (tile.proj_x, tile.proj_y),
+                    (tile.proj_x + tile.proj_width, tile.proj_y + tile.proj_height),
+                    (50, 50, 50),
+                    2,
+                )
 
         # Highlight goal row
         if self.tile_grid:
@@ -689,16 +694,62 @@ class ProjectionRenderer:
 
         return canvas
 
-    def _render_ui_bar(
-        self, canvas: np.ndarray, state: GameState, current_hearts: int, current_score: int
+    def _render_hearts_top(self, canvas: np.ndarray, current_hearts: int) -> np.ndarray:
+        """
+        Render hearts at TOP of screen.
+
+        Args:
+            canvas (np.ndarray): Canvas to render on.
+            current_hearts (int): Number of hearts remaining.
+
+        Returns:
+            np.ndarray: Canvas with hearts rendered.
+        """
+        width = canvas.shape[1]
+        hearts_y = 40  # Top of screen
+        heart_spacing = 50
+        hearts_start_x = (width - (3 * heart_spacing)) // 2  # Center them
+
+        for i in range(3):  # Always show 3 heart slots
+            heart_x = hearts_start_x + (i * heart_spacing) + 25
+            if i < current_hearts:
+                # Filled heart (red)
+                cv2.circle(canvas, (heart_x - 10, hearts_y), 12, (0, 0, 255), -1)
+                cv2.circle(canvas, (heart_x + 10, hearts_y), 12, (0, 0, 255), -1)
+                pts = np.array(
+                    [
+                        [heart_x - 22, hearts_y],
+                        [heart_x, hearts_y + 25],
+                        [heart_x + 22, hearts_y],
+                    ],
+                    np.int32,
+                )
+                cv2.fillPoly(canvas, [pts], (0, 0, 255))
+            else:
+                # Empty heart (gray outline)
+                cv2.circle(canvas, (heart_x - 10, hearts_y), 12, (100, 100, 100), 2)
+                cv2.circle(canvas, (heart_x + 10, hearts_y), 12, (100, 100, 100), 2)
+                pts = np.array(
+                    [
+                        [heart_x - 22, hearts_y],
+                        [heart_x, hearts_y + 25],
+                        [heart_x + 22, hearts_y],
+                    ],
+                    np.int32,
+                )
+                cv2.polylines(canvas, [pts], False, (100, 100, 100), 2)
+
+        return canvas
+
+    def _render_ui_bar_bottom(
+        self, canvas: np.ndarray, state: GameState, current_score: int
     ) -> np.ndarray:
         """
-        Render UI bar at bottom with hearts and score.
+        Render UI bar at bottom with score and game state.
 
         Args:
             canvas (np.ndarray): Canvas to render on.
             state (GameState): Current game state.
-            current_hearts (int): Number of hearts remaining.
             current_score (int): Current score.
 
         Returns:
@@ -712,51 +763,16 @@ class ProjectionRenderer:
         # Semi-transparent dark bar at bottom
         overlay = canvas.copy()
         cv2.rectangle(overlay, (0, bar_y_start), (width, height), (20, 20, 20), -1)
-        cv2.addWeighted(overlay, 0.8, canvas, 0.2, 0, canvas)
+        cv2.addWeighted(overlay, 0.9, canvas, 0.1, 0, canvas)
 
         font = cv2.FONT_HERSHEY_SIMPLEX
 
-        # Render hearts at top of bar
-        heart_size = 30
-        heart_spacing = 40
-        hearts_y = bar_y_start + 30
-        hearts_start_x = 50
-
-        for i in range(3):  # Always show 3 heart slots
-            heart_x = hearts_start_x + (i * heart_spacing)
-            if i < current_hearts:
-                # Filled heart (red)
-                cv2.circle(canvas, (heart_x - 8, hearts_y), 10, (0, 0, 255), -1)
-                cv2.circle(canvas, (heart_x + 8, hearts_y), 10, (0, 0, 255), -1)
-                pts = np.array(
-                    [
-                        [heart_x - 18, hearts_y],
-                        [heart_x, hearts_y + 20],
-                        [heart_x + 18, hearts_y],
-                    ],
-                    np.int32,
-                )
-                cv2.fillPoly(canvas, [pts], (0, 0, 255))
-            else:
-                # Empty heart (gray outline)
-                cv2.circle(canvas, (heart_x - 8, hearts_y), 10, (100, 100, 100), 2)
-                cv2.circle(canvas, (heart_x + 8, hearts_y), 10, (100, 100, 100), 2)
-                pts = np.array(
-                    [
-                        [heart_x - 18, hearts_y],
-                        [heart_x, hearts_y + 20],
-                        [heart_x + 18, hearts_y],
-                    ],
-                    np.int32,
-                )
-                cv2.polylines(canvas, [pts], False, (100, 100, 100), 2)
-
         # Render score on right side
         score_text = f"Score: {current_score}"
-        score_size = cv2.getTextSize(score_text, font, 1.0, 2)[0]
+        score_size = cv2.getTextSize(score_text, font, 1.2, 3)[0]
         score_x = width - score_size[0] - 50
-        score_y = bar_y_start + 40
-        cv2.putText(canvas, score_text, (score_x, score_y), font, 1.0, (255, 255, 255), 2)
+        score_y = bar_y_start + 55
+        cv2.putText(canvas, score_text, (score_x, score_y), font, 1.2, (255, 255, 255), 3)
 
         # Render state message in center
         if state == GameState.GREEN_LIGHT:
@@ -771,15 +787,18 @@ class ProjectionRenderer:
         elif state == GameState.PENALTY:
             message = "PENALTY!"
             color = (255, 0, 255)
+        elif state == GameState.COUNTDOWN:
+            message = "Stand on Green Tile"
+            color = (0, 255, 255)
         else:
             message = ""
             color = (255, 255, 255)
 
         if message:
-            msg_size = cv2.getTextSize(message, font, 0.9, 2)[0]
+            msg_size = cv2.getTextSize(message, font, 1.0, 2)[0]
             msg_x = (width - msg_size[0]) // 2
-            msg_y = bar_y_start + 40
-            cv2.putText(canvas, message, (msg_x, msg_y), font, 0.9, color, 2)
+            msg_y = bar_y_start + 55
+            cv2.putText(canvas, message, (msg_x, msg_y), font, 1.0, color, 2)
 
         return canvas
 

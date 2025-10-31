@@ -284,11 +284,8 @@ class GameStateMachine:
                     self.state_duration = float("inf")
                     return
             
-            # Move player back one row immediately
-            if self.tile_grid:
-                # Apply penalty (move back 1 row as configured)
-                self.tile_grid.apply_penalty()
-                hailo_logger.info("Player moved back to row %d", self.tile_grid.player_row)
+            # Don't move player back - just lose heart and continue
+            hailo_logger.info("Player lost heart but stays at current position")
             
             # Immediately end red light and transition to penalty display
             self._change_state(GameState.PENALTY)
@@ -486,6 +483,16 @@ class GameStateMachine:
             self.player_current_row = self.tile_grid.player_row
 
         hailo_logger.info("Game state machine reset with %d hearts", self.current_hearts)
+    
+    def force_start_green_light(self) -> None:
+        """Force start green light phase (called when player is on start square)."""
+        self._change_state(GameState.GREEN_LIGHT)
+        self.state_duration = float("inf")
+        if self.tile_grid:
+            self.green_light_starting_row = self.tile_grid.player_row
+        if self.game_start_time is None:
+            self.game_start_time = time.time()
+        hailo_logger.info("Forced green light start")
 
     def end_game(self) -> None:
         """Transition to game over state."""
