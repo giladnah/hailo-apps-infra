@@ -23,9 +23,9 @@ lava_floor:
   tile_border_thickness: 2              # Border thickness around tiles (pixels)
   tile_border_color: [50, 50, 50]       # Border color (BGR format)
 
-# Movement detection settings
+# Movement detection settings (freeze detection)
 movement:
-  threshold_pixels: 20.0                # Movement threshold in pixels
+  threshold_pixels: 25.0                # Movement threshold in pixels (higher = less sensitive)
   monitored_keypoints:                  # Body parts monitored for movement
     - left_wrist
     - right_wrist
@@ -33,9 +33,9 @@ movement:
     - right_ankle
     - left_shoulder
     - right_shoulder
-  smoothing_alpha: 0.3                  # Smoothing factor (0-1, higher = more responsive)
-  pose_history_size: 5                  # Number of poses to keep for smoothing
-  sensitivity_multiplier: 1.0           # Movement sensitivity (higher = more sensitive)
+  smoothing_alpha: 0.15                 # Smoothing factor (0-1, lower = more smoothing, more stable)
+  pose_history_size: 8                  # Number of poses to keep for smoothing (higher = more stable)
+  sensitivity_multiplier: 0.8           # Movement sensitivity (lower = less sensitive)
   keypoint_confidence_threshold: 0.5    # Minimum confidence score for keypoints (0-1)
 
 # Camera configuration

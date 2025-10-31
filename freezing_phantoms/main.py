@@ -189,6 +189,8 @@ class FreezingPhantomsGame:
         print("")
         print("Controls:")
         print("  R - Restart game")
+        print("  + / - - Increase / Decrease freeze detection sensitivity")
+        print("  S - Show current sensitivity settings")
         print("  ESC - Quit")
         print("=" * 60)
         print("")
@@ -245,6 +247,28 @@ class FreezingPhantomsGame:
                 elif key == ord('r') or key == ord('R'):
                     hailo_logger.info("R pressed, restarting game")
                     self.game_state.reset()
+                
+                # Sensitivity controls for freeze detection
+                elif key == ord('+') or key == ord('='):
+                    # Increase sensitivity (lower threshold)
+                    new_threshold = max(5.0, self.movement_detector.threshold_pixels - 5.0)
+                    self.movement_detector.set_threshold(new_threshold)
+                    print(f"Freeze detection MORE sensitive: {new_threshold:.1f}px threshold")
+                elif key == ord('-') or key == ord('_'):
+                    # Decrease sensitivity (higher threshold)
+                    new_threshold = min(50.0, self.movement_detector.threshold_pixels + 5.0)
+                    self.movement_detector.set_threshold(new_threshold)
+                    print(f"Freeze detection LESS sensitive: {new_threshold:.1f}px threshold")
+                elif key == ord('s') or key == ord('S'):
+                    # Show current sensitivity settings
+                    stats = self.movement_detector.get_smoothing_stats()
+                    print("\n=== Freeze Detection Settings ===")
+                    print(f"Threshold: {stats['threshold_pixels']:.1f}px")
+                    print(f"Effective threshold: {stats['effective_threshold']:.1f}px")
+                    print(f"Sensitivity multiplier: {stats['sensitivity_multiplier']:.2f}x")
+                    print(f"Smoothing alpha: {stats['smoothing_alpha']:.2f}")
+                    print(f"Pose history size: {stats['pose_history_size']}")
+                    print("=================================\n")
 
                 # Maintain frame rate
                 target_frame_time = 1.0 / 30  # 30 FPS

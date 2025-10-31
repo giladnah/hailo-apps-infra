@@ -252,13 +252,13 @@ class ProjectionRenderer:
 
         return canvas
 
-    def _render_tile_grid(self, canvas: np.ndarray, alpha: float = 0.8) -> np.ndarray:
+    def _render_tile_grid(self, canvas: np.ndarray, alpha: float = 1.0) -> np.ndarray:
         """
-        Render the tile grid on canvas.
+        Render the tile grid on canvas with high intensity.
 
         Args:
             canvas (np.ndarray): Canvas to render on.
-            alpha (float): Tile opacity (0-1).
+            alpha (float): Tile opacity (0-1). Default 1.0 for full intensity.
 
         Returns:
             np.ndarray: Canvas with tile grid rendered.
@@ -270,15 +270,15 @@ class ProjectionRenderer:
         if self.board_effects:
             canvas = self.board_effects.render_lava_background(canvas, alpha=0.2)
 
-        # Render each tile
+        # Render each tile at high intensity
         for tile in self.tile_grid.get_all_tiles():
-            # Determine tile color based on state
+            # Determine tile color based on state (bright, high intensity)
             if tile.state == TileState.GREEN:
-                color = (0, 200, 0)  # Green - safe
+                color = (0, 255, 0)  # Bright green - safe
             else:  # RED
-                color = (0, 0, 255)  # Red - lava
+                color = (0, 0, 255)  # Bright red - lava
 
-            # Draw tile with transparency
+            # Draw tile with high opacity for visibility
             overlay = canvas.copy()
             cv2.rectangle(
                 overlay,
@@ -324,8 +324,8 @@ class ProjectionRenderer:
         Returns:
             np.ndarray: Rendered canvas.
         """
-        # Render tile grid
-        canvas = self._render_tile_grid(canvas, alpha=0.6)
+        # Render tile grid at high intensity
+        canvas = self._render_tile_grid(canvas, alpha=0.95)
 
         # Display "GET READY!" text at bottom, upside down
         text = "GET READY!"
@@ -369,8 +369,8 @@ class ProjectionRenderer:
         Returns:
             np.ndarray: Rendered canvas.
         """
-        # Render tile grid
-        canvas = self._render_tile_grid(canvas, alpha=0.8)
+        # Render tile grid at full intensity
+        canvas = self._render_tile_grid(canvas, alpha=1.0)
 
         # Render player position indicator
         if player_data and "players" in player_data and self.tile_grid:
@@ -417,8 +417,8 @@ class ProjectionRenderer:
         # Red tint overlay
         canvas[:, :] = (10, 0, 30)  # Dark red background
 
-        # Render dimmed tile grid
-        canvas = self._render_tile_grid(canvas, alpha=0.3)
+        # Render tile grid at high intensity (keep visible during red light)
+        canvas = self._render_tile_grid(canvas, alpha=0.9)
 
         # Draw scanning laser effect
         laser_y = int((self.frame_counter * 5) % canvas.shape[0])
@@ -474,8 +474,8 @@ class ProjectionRenderer:
         # Dim red background
         canvas[:, :] = (20, 0, 40)
 
-        # Render tile grid dimmed
-        canvas = self._render_tile_grid(canvas, alpha=0.3)
+        # Render tile grid at high intensity (keep visible during penalty)
+        canvas = self._render_tile_grid(canvas, alpha=0.9)
 
         # Determine message based on violation type
         if violation_type == "tile":
@@ -524,8 +524,8 @@ class ProjectionRenderer:
         Returns:
             np.ndarray: Rendered canvas.
         """
-        # Render tile grid in the background
-        canvas = self._render_tile_grid(canvas, alpha=0.5)
+        # Render tile grid at high intensity
+        canvas = self._render_tile_grid(canvas, alpha=0.95)
 
         # Victory text - normal orientation since player is at bottom (close to camera)
         text = "YOU WIN!"
