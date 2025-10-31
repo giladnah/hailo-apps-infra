@@ -591,9 +591,12 @@ class ProjectionRenderer:
 
         # Render ghost if active
         if ghost_position is not None:
+            hailo_logger.info("👻 Ghost position provided: %s, ghost_image loaded: %s",
+                            ghost_position, self.ghost_image is not None)
             if self.ghost_image is None:
                 hailo_logger.warning("👻 Ghost position provided but ghost image not loaded!")
-            canvas = self._render_ghost(canvas, ghost_position)
+            else:
+                canvas = self._render_ghost(canvas, ghost_position)
 
         # Add "FREEZE!" text at bottom, upside down
         text = "FREEZE!"
@@ -940,7 +943,7 @@ class ProjectionRenderer:
         ghost_x, ghost_y = int(ghost_position[0]), int(ghost_position[1])
         ghost_h, ghost_w = self.ghost_image.shape[:2]
 
-        hailo_logger.debug("👻 Rendering ghost at (%d, %d), size=%dx%d, channels=%d",
+        hailo_logger.info("👻 Rendering ghost at (%d, %d), size=%dx%d, channels=%d",
                           ghost_x, ghost_y, ghost_w, ghost_h, self.ghost_image.shape[2])
 
         # Calculate top-left position (center the ghost on the target position)

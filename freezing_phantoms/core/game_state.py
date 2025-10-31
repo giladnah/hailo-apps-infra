@@ -625,8 +625,10 @@ class GameStateMachine:
             return False  # Already spawned
 
         # Check if player is on the specified row
-        if self.tile_grid and self.tile_grid.player_row >= self.ghost_start_on_row:
-            return True
+        if self.tile_grid:
+            player_row = self.tile_grid.player_row
+            if player_row >= self.ghost_start_on_row:
+                return True
 
         return False
 

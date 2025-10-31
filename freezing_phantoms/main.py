@@ -348,20 +348,28 @@ class FreezingPhantomsGame:
                 if self.game_state.current_state == GameState.RED_LIGHT:
                     # Check if ghost should spawn
                     should_spawn = self.game_state.should_spawn_ghost()
+                    hailo_logger.debug("👻 RED_LIGHT: should_spawn=%s, has_player_data=%s",
+                                     should_spawn, player_data is not None and "players" in player_data)
                     if should_spawn and player_data and "players" in player_data:
                         # Get player hip position (target for ghost)
                         player = player_data["players"][0]  # Use first player
-                        if hasattr(player, 'pose') and player.pose:
+
+                        # Use pose_keypoints attribute from PlayerData
+                        if hasattr(player, 'pose_keypoints') and player.pose_keypoints:
                             # Calculate center between hips
-                            left_hip = player.pose.get("left_hip")
-                            right_hip = player.pose.get("right_hip")
+                            # pose_keypoints is a dict of keypoint_name -> (x, y, confidence)
+                            left_hip = player.pose_keypoints.get("left_hip")
+                            right_hip = player.pose_keypoints.get("right_hip")
+
                             if left_hip and right_hip:
                                 target_x = (left_hip[0] + right_hip[0]) / 2
                                 target_y = (left_hip[1] + right_hip[1]) / 2
                                 target_proj = self.renderer.transform_point(target_x, target_y)
+                                print(f"👻 Target calculated: cam({target_x:.1f}, {target_y:.1f}) -> proj{target_proj}")
 
                                 # Get spawn position from last row center
                                 ghost_spawn_row = self.config.get("ghost", {}).get("spawn_row", 4)
+                                print(f"👻 Looking for spawn tile at row {ghost_spawn_row}, col 1")
                                 spawn_tile = None
                                 for tile in self.tile_grid.get_all_tiles():
                                     if tile.row == ghost_spawn_row and tile.col == 1:  # Center column
@@ -369,17 +377,24 @@ class FreezingPhantomsGame:
                                         break
 
                                 if spawn_tile:
-                                    spawn_x = spawn_tile.proj_x + spawn_tile.actual_width // 2
-                                    spawn_y = spawn_tile.proj_y + spawn_tile.actual_height // 2
+                                    spawn_x = spawn_tile.proj_x + spawn_tile.proj_width // 2
+                                    spawn_y = spawn_tile.proj_y + spawn_tile.proj_height // 2
+                                    print(f"👻 Found spawn tile! Spawning at ({spawn_x}, {spawn_y})")
                                     hailo_logger.info("👻 Spawning ghost at (%d, %d) targeting (%d, %d)",
                                                      spawn_x, spawn_y, target_proj[0], target_proj[1])
                                     self.game_state.spawn_ghost((spawn_x, spawn_y), target_proj)
+                                    print(f"👻 ========== GHOST SPAWNED! ==========")
+                                    print(f"👻 Position: ({spawn_x}, {spawn_y})")
+                                    print(f"👻 Target: {target_proj}")
+                                    print(f"👻 Active: {self.game_state.ghost_active}")
+                                    print(f"👻 =====================================")
                                 else:
+                                    print(f"👻 ERROR: Could not find spawn tile at row {ghost_spawn_row}, col 1")
                                     hailo_logger.warning("👻 Could not find spawn tile at row %d, col 1", ghost_spawn_row)
                             else:
-                                hailo_logger.debug("👻 Missing hip keypoints for ghost target")
+                                print("👻 Missing hip keypoints in pose_keypoints")
                         else:
-                            hailo_logger.debug("👻 Player has no pose data")
+                            print("👻 Player has no pose_keypoints attribute")
                     elif self.game_state.current_state == GameState.RED_LIGHT and current_time - self.last_debug_time >= 2.0:
                         # Debug why ghost isn't spawning (only log every 2s to avoid spam)
                         if not should_spawn:
@@ -390,6 +405,8 @@ class FreezingPhantomsGame:
                                              self.game_state.ghost_start_on_row)
 
                     # Update ghost position (move towards target)
+                    if self.game_state.ghost_active:
+                        print(f"👻 Ghost is ACTIVE at position: {self.game_state.ghost_position}")
                     if self.game_state.ghost_active and self.game_state.ghost_position and self.game_state.ghost_target:
                         ghost_speed = self.config.get("ghost", {}).get("speed", 60.0)
 
@@ -436,6 +453,9 @@ class FreezingPhantomsGame:
                     current_score = max(0, base_score - penalty_deduction - time_deduction)
 
                 # Render projection frame
+                if self.game_state.ghost_position:
+                    print(f"👻 Passing ghost_position to renderer: {self.game_state.ghost_position}")
+
                 projection_frame = self.renderer.render_frame(
                     state=self.game_state.current_state,
                     player_data=player_data,
