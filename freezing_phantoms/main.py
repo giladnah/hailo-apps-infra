@@ -110,6 +110,7 @@ class FreezingPhantomsGame:
             display_index=self.config["projector"]["display_index"],
             tile_grid=self.tile_grid,
             board_effects=self.board_effects,
+            movement_detector=self.movement_detector,
         )
 
         # Initialize game state machine

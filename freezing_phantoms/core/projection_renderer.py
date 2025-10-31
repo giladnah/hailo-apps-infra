@@ -35,6 +35,7 @@ class ProjectionRenderer:
         display_index: int = 1,
         tile_grid: Optional[TileGrid] = None,
         board_effects: Optional[BoardEffects] = None,
+        movement_detector: Optional["MovementDetector"] = None,
     ):
         """
         Initialize projection renderer.
@@ -45,6 +46,7 @@ class ProjectionRenderer:
             display_index (int): Display index for projector (0=primary, 1=secondary).
             tile_grid (Optional[TileGrid]): Tile grid system for game board.
             board_effects (Optional[BoardEffects]): Board visual effects.
+            movement_detector (Optional[MovementDetector]): Movement detector for visualization.
         """
         self.H = homography_matrix
         self.projector_resolution = projector_resolution
@@ -52,6 +54,7 @@ class ProjectionRenderer:
         self.window_name = "Freezing Phantoms - Projector"
         self.tile_grid = tile_grid
         self.board_effects = board_effects
+        self.movement_detector = movement_detector
 
         # Animation frame counter
         self.frame_counter = 0
@@ -515,6 +518,10 @@ class ProjectionRenderer:
         laser_y = int((self.frame_counter * 5) % canvas.shape[0])
         cv2.line(canvas, (0, laser_y), (canvas.shape[1], laser_y), (0, 0, 255), 3)
 
+        # Draw smoothed keypoints for debugging
+        if player_data and "players" in player_data and self.movement_detector:
+            canvas = self._draw_smoothed_keypoints(canvas, player_data)
+        
         # Render player position with frozen indicator
         if player_data and "players" in player_data:
             for player in player_data["players"]:
@@ -809,6 +816,49 @@ class ProjectionRenderer:
             canvas, score_text, score_x, bar_y_start + 60, (255, 255, 255), 1.2, 3, centered=False
         )
 
+        return canvas
+
+    def _draw_smoothed_keypoints(self, canvas: np.ndarray, player_data: Dict) -> np.ndarray:
+        """
+        Draw smoothed keypoint positions for debugging.
+        Shows the positions after smoothing (before velocity calculation).
+
+        Args:
+            canvas (np.ndarray): Canvas to draw on.
+            player_data (Dict): Player data with pose information.
+
+        Returns:
+            np.ndarray: Canvas with smoothed keypoints drawn.
+        """
+        if not self.movement_detector or not player_data or "players" not in player_data:
+            return canvas
+        
+        for player in player_data["players"]:
+            track_id = player.track_id
+            
+            # Get smoothed pose from movement detector
+            smoothed_pose = self.movement_detector.get_smoothed_pose(track_id)
+            if not smoothed_pose:
+                continue
+            
+            # Draw each smoothed keypoint
+            for keypoint_name, (x, y) in smoothed_pose.items():
+                # Transform to projector coordinates
+                proj_point = cv2.perspectiveTransform(
+                    np.array([[[x, y]]], dtype=np.float32),
+                    self.homography_matrix
+                )[0][0]
+                proj_x, proj_y = int(proj_point[0]), int(proj_point[1])
+                
+                # Draw smoothed keypoint (cyan circle)
+                cv2.circle(canvas, (proj_x, proj_y), 8, (255, 255, 0), -1)  # Cyan filled
+                cv2.circle(canvas, (proj_x, proj_y), 8, (255, 255, 255), 2)  # White border
+                
+                # Draw keypoint label
+                label_y = proj_y - 12
+                cv2.putText(canvas, keypoint_name[:5], (proj_x - 15, label_y),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
         return canvas
 
     def _render_game_over(self, canvas: np.ndarray) -> np.ndarray:

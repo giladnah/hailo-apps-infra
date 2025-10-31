@@ -26,11 +26,11 @@ hailo_logger = get_logger(__name__)
 class MovementDetector:
     """
     Detects movement using velocity-based rolling window approach.
-    
+
     Two-stage process:
     1. Position Smoothing: Apply EMA to noisy raw keypoint positions
     2. Velocity Calculation: Calculate velocity from smoothed positions over time window
-    
+
     Movement is detected when velocity exceeds threshold for multiple consecutive frames.
 
     Attributes:
@@ -47,7 +47,7 @@ class MovementDetector:
         self,
         velocity_threshold: float = 100.0,  # pixels/second (not just pixels!)
         monitored_keypoints: List[str] = None,
-        position_smoothing_alpha: float = 0.3,  # For smoothing raw positions
+        position_smoothing_alpha: float = 0.2,  # For smoothing raw positions
         velocity_window_duration: float = 0.3,  # seconds
         min_consecutive_frames: int = 2,
         keypoint_confidence_threshold: float = 0.5,
@@ -86,16 +86,16 @@ class MovementDetector:
         # Smoothed pose history with timestamps: {track_id: deque of (timestamp, smoothed_pose)}
         max_history_frames = int(fps * velocity_window_duration * 2)  # Keep 2x window for safety
         self.pose_history_timestamped: Dict[int, deque] = {}
-        
+
         # Last smoothed pose for EMA: {track_id: {keypoint: (x, y)}}
         self.last_smoothed_pose: Dict[int, Dict[str, Tuple[float, float]]] = {}
-        
+
         # Consecutive violation counter: {track_id: int}
         self.consecutive_violations: Dict[int, int] = {}
-        
+
         # Velocity cache for visualization: {track_id: {keypoint: (vx, vy)}}
         self.velocity_vectors: Dict[int, Dict[str, Tuple[float, float]]] = {}
-        
+
         self.max_history_frames = max_history_frames
 
         hailo_logger.info(
@@ -133,23 +133,23 @@ class MovementDetector:
         """
         if track_id not in self.last_smoothed_pose:
             self.last_smoothed_pose[track_id] = {}
-        
+
         if keypoint_name not in self.last_smoothed_pose[track_id]:
             # First measurement - no smoothing
             self.last_smoothed_pose[track_id][keypoint_name] = raw_position
             return raw_position
-        
+
         # Apply exponential moving average
         x_prev, y_prev = self.last_smoothed_pose[track_id][keypoint_name]
         x_raw, y_raw = raw_position
-        
+
         alpha = self.position_smoothing_alpha
         x_smooth = x_prev + alpha * (x_raw - x_prev)
         y_smooth = y_prev + alpha * (y_raw - y_prev)
-        
+
         smoothed = (x_smooth, y_smooth)
         self.last_smoothed_pose[track_id][keypoint_name] = smoothed
-        
+
         return smoothed
 
     def _filter_keypoints_by_confidence(
@@ -177,7 +177,7 @@ class MovementDetector:
 
         return filtered_keypoints
 
-    def add_pose(self, track_id: int, raw_pose: Dict[str, Tuple[float, float]], 
+    def add_pose(self, track_id: int, raw_pose: Dict[str, Tuple[float, float]],
                  pose_confidences: Dict[str, float], current_time: Optional[float] = None) -> None:
         """
         Add a new pose measurement.
@@ -191,23 +191,23 @@ class MovementDetector:
         """
         if current_time is None:
             current_time = time.time()
-        
+
         # Filter by confidence
         filtered_pose = self._filter_keypoints_by_confidence(raw_pose, pose_confidences)
-        
+
         if not filtered_pose:
             return
-        
+
         # Smooth each keypoint position
         smoothed_pose = {}
         for keypoint_name, raw_position in filtered_pose.items():
             smoothed_position = self._smooth_keypoint_position(track_id, keypoint_name, raw_position)
             smoothed_pose[keypoint_name] = smoothed_position
-        
+
         # Add to timestamped history
         if track_id not in self.pose_history_timestamped:
             self.pose_history_timestamped[track_id] = deque(maxlen=self.max_history_frames)
-        
+
         self.pose_history_timestamped[track_id].append((current_time, smoothed_pose))
 
     def calculate_velocity(self, track_id: int) -> Tuple[float, Optional[str]]:
@@ -223,58 +223,58 @@ class MovementDetector:
         """
         if track_id not in self.pose_history_timestamped:
             return 0.0, None
-        
+
         history = self.pose_history_timestamped[track_id]
-        
+
         if len(history) < 2:
             return 0.0, None
-        
+
         # Get poses within velocity window
         current_time = history[-1][0]
         window_start_time = current_time - self.velocity_window_duration
-        
+
         window_poses = [(t, p) for t, p in history if t >= window_start_time]
-        
+
         if len(window_poses) < 2:
             return 0.0, None
-        
+
         # Calculate velocity for each keypoint
         max_velocity = 0.0
         max_keypoint = None
         velocity_dict = {}
-        
+
         t_start, pose_start = window_poses[0]
         t_end, pose_end = window_poses[-1]
         time_delta = t_end - t_start
-        
+
         if time_delta < 0.01:  # Avoid division by zero
             return 0.0, None
-        
+
         for keypoint_name in self.monitored_keypoints:
             if keypoint_name in pose_start and keypoint_name in pose_end:
                 x0, y0 = pose_start[keypoint_name]
                 x1, y1 = pose_end[keypoint_name]
-                
+
                 # Calculate displacement and velocity
                 dx = x1 - x0
                 dy = y1 - y0
                 displacement = math.sqrt(dx**2 + dy**2)
                 velocity = displacement / time_delta  # pixels/second
-                
+
                 # Store velocity vector for visualization
                 vx = dx / time_delta
                 vy = dy / time_delta
                 velocity_dict[keypoint_name] = (vx, vy)
-                
+
                 if velocity > max_velocity:
                     max_velocity = velocity
                     max_keypoint = keypoint_name
-        
+
         # Cache velocity vectors for visualization
         if track_id not in self.velocity_vectors:
             self.velocity_vectors[track_id] = {}
         self.velocity_vectors[track_id] = velocity_dict
-        
+
         return max_velocity, max_keypoint
 
     def detect_movement(self, track_id: int, debug_log: bool = False) -> Tuple[bool, float, Optional[str]]:
@@ -289,6 +289,19 @@ class MovementDetector:
         Returns:
             Tuple[bool, float, Optional[str]]: (movement_detected, velocity, keypoint_name)
         """
+        # Bootstrap check: need enough history for stable velocity calculation
+        if track_id not in self.pose_history_timestamped:
+            return False, 0.0, None
+        
+        history = self.pose_history_timestamped[track_id]
+        min_frames_for_bootstrap = int(self.fps * self.velocity_window_duration) + 2
+        
+        if len(history) < min_frames_for_bootstrap:
+            # Not enough history yet - still warming up
+            if debug_log:
+                print(f"[Track {track_id}] Bootstrap: {len(history)}/{min_frames_for_bootstrap} frames (warmup)")
+            return False, 0.0, None
+        
         velocity, keypoint = self.calculate_velocity(track_id)
         
         # Debug logging: dump all keypoint velocities
@@ -305,7 +318,7 @@ class MovementDetector:
             if track_id not in self.consecutive_violations:
                 self.consecutive_violations[track_id] = 0
             self.consecutive_violations[track_id] += 1
-            
+
             # Require multiple consecutive frames above threshold
             if self.consecutive_violations[track_id] >= self.min_consecutive_frames:
                 # Log with all velocities when detected
@@ -315,7 +328,7 @@ class MovementDetector:
                         for kp, (vx, vy) in self.velocity_vectors[track_id].items()
                     ])
                     print(f"🚨 MOVEMENT DETECTED [Track {track_id}]: {velocities_str} | MAX: {keypoint}={velocity:.1f}px/s")
-                
+
                 hailo_logger.debug(
                     "Movement detected for track %d: %s moving at %.1f px/s (threshold: %.1f px/s, %d consecutive frames)",
                     track_id, keypoint, velocity, self.velocity_threshold, self.consecutive_violations[track_id]
@@ -324,8 +337,23 @@ class MovementDetector:
         else:
             # Reset counter if below threshold
             self.consecutive_violations[track_id] = 0
-        
+
         return False, velocity, keypoint
+
+    def get_smoothed_pose(self, track_id: int) -> Dict[str, Tuple[float, float]]:
+        """
+        Get the current smoothed pose for a player.
+        Used for visualization/debugging.
+
+        Args:
+            track_id (int): Track ID of player.
+
+        Returns:
+            Dict[str, Tuple[float, float]]: Smoothed keypoint positions (camera coords).
+        """
+        if track_id not in self.last_smoothed_pose:
+            return {}
+        return self.last_smoothed_pose[track_id].copy()
 
     def detect_player_movement(
         self,
@@ -346,7 +374,7 @@ class MovementDetector:
         """
         current_time = time.time()
         movement_results = {}
-        
+
         # Add current poses to history (with smoothing)
         for player in players_current:
             track_id = player.track_id
@@ -356,13 +384,13 @@ class MovementDetector:
                 getattr(player, 'pose_keypoint_confidences', {}),
                 current_time
             )
-        
+
         # Detect movement for each player
         for player in players_current:
             track_id = player.track_id
             moved, velocity, keypoint = self.detect_movement(track_id, debug_log=debug_log)
             movement_results[track_id] = (moved, velocity, keypoint)
-        
+
         return movement_results
 
     def get_velocity_vectors_for_visualization(self, track_id: int) -> Dict[str, Tuple[float, float]]:
@@ -389,11 +417,11 @@ class MovementDetector:
         """
         if track_id not in self.pose_history_timestamped:
             return None
-        
+
         history = self.pose_history_timestamped[track_id]
         if not history:
             return None
-        
+
         _, smoothed_pose = history[-1]
         return smoothed_pose
 
@@ -419,24 +447,24 @@ class MovementDetector:
             np.ndarray: Canvas with arrows drawn.
         """
         velocity_vectors = self.get_velocity_vectors_for_visualization(track_id)
-        
+
         if not velocity_vectors:
             return canvas
-        
+
         for keypoint_name, (vx, vy) in velocity_vectors.items():
             if keypoint_name not in pose_keypoints:
                 continue
-            
+
             x, y = pose_keypoints[keypoint_name]
             x, y = int(x), int(y)
-            
+
             # Calculate arrow end point (scale velocity for visualization)
             end_x = int(x + vx * scale_factor)
             end_y = int(y + vy * scale_factor)
-            
+
             # Calculate velocity magnitude
             velocity_mag = math.sqrt(vx**2 + vy**2)
-            
+
             # Color intensity based on velocity
             if velocity_mag > self.velocity_threshold:
                 # Above threshold - red
@@ -444,15 +472,15 @@ class MovementDetector:
             else:
                 # Below threshold - yellow
                 arrow_color = color
-            
+
             # Draw arrow
             cv2.arrowedLine(canvas, (x, y), (end_x, end_y), arrow_color, 2, tipLength=0.3)
-            
+
             # Draw velocity text
             velocity_text = f"{velocity_mag:.0f}"
-            cv2.putText(canvas, velocity_text, (x + 5, y - 5), 
+            cv2.putText(canvas, velocity_text, (x + 5, y - 5),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, arrow_color, 1)
-        
+
         return canvas
 
     def reset_player(self, track_id: int) -> None:
