@@ -253,10 +253,13 @@ class FreezingPhantomsGame:
                 # Check for tile violations during GREEN_LIGHT
                 if self.game_state.current_state == GameState.GREEN_LIGHT and player_data:
                     self._check_tile_violations(player_data)
-
-                    # Check if player has advanced to next row
-                    if self.game_state.check_player_advancement():
-                        print("✓ Player advanced! Starting transition to RED LIGHT...")
+                    
+                    # Remove green tiles behind player
+                    self.tile_grid.remove_tiles_behind_player()
+                    
+                    # Check if player is on front tile for 2 seconds
+                    if self.game_state.check_player_on_front_tile():
+                        print("✓ Player on front tile for 2s! Starting transition to RED LIGHT...")
                         self.game_state.trigger_transition_to_red_light(player_data)
 
                 # Check for movement during RED_LIGHT
@@ -350,6 +353,9 @@ class FreezingPhantomsGame:
                 if current_tile and self.tile_grid.is_tile_dangerous(current_tile):
                     hailo_logger.warning("Player %d stepped on lava tile!", player.track_id)
                     self.game_state.register_tile_violation(player.track_id)
+                    # Trigger visual effect
+                    self.renderer.trigger_lava_step_effect()
+                    print("🔥 LAVA! Player stepped on red tile!")
 
     def _check_for_movement(self, player_data: dict) -> None:
         """

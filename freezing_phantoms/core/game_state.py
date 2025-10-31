@@ -88,10 +88,14 @@ class GameStateMachine:
         # Track player's starting row at beginning of green light
         self.green_light_starting_row = None
 
+        # Track when player reaches front tile
+        self.front_tile_reached_time = None
+        self.front_tile_wait_duration = config.get("game", {}).get("front_tile_wait_duration", 2.0)
+
         # Flashing transition parameters
         self.flash_count = 0
         self.last_flash_time = 0
-        self.flash_interval = config.get("game", {}).get("flash_interval", 0.75)
+        self.flash_interval = config.get("game", {}).get("flash_interval", 0.25)
         self.flash_total = config.get("game", {}).get("flash_total", 3)
 
         hailo_logger.info("Game state machine initialized in %s", self.current_state.value)
@@ -262,6 +266,10 @@ class GameStateMachine:
             self.tile_violators.append(track_id)
             hailo_logger.info("Player %d stepped on lava!", track_id)
 
+            # Trigger audio callback for lava step
+            if self.audio_callback:
+                self.audio_callback("lava_step")
+
             # Transition to penalty immediately
             if self.current_state == GameState.GREEN_LIGHT:
                 self._change_state(GameState.PENALTY)
@@ -342,36 +350,43 @@ class GameStateMachine:
             self.state_duration = duration
         hailo_logger.warning("Forced state change to %s", state.value)
 
-    def check_player_advancement(self) -> bool:
+    def check_player_on_front_tile(self) -> bool:
         """
-        Check if player has advanced to a new revealed row during green light.
+        Check if player is on the furthest revealed row during green light.
+        Starts a 2-second timer when reached.
         
         Returns:
-            bool: True if player advanced to a new row.
+            bool: True if 2 seconds have passed since reaching front tile.
         """
         if self.current_state != GameState.GREEN_LIGHT:
             return False
         
-        if not self.tile_grid or self.green_light_starting_row is None:
+        if not self.tile_grid:
             return False
         
         current_row = self.tile_grid.player_row
+        revealed_row = self.tile_grid.current_revealed_row
         
-        # Check if player moved forward towards goal
-        if self.tile_grid.goal_row > self.tile_grid.starting_row:
-            # Moving down (increasing row numbers)
-            advanced = current_row > self.green_light_starting_row
+        # Check if player is on the furthest revealed row
+        on_front_tile = (current_row == revealed_row)
+        
+        if on_front_tile:
+            # Start timer if not already started
+            if self.front_tile_reached_time is None:
+                self.front_tile_reached_time = time.time()
+                hailo_logger.info("Player reached front tile (row %d), starting 2s timer", current_row)
+                return False
+            
+            # Check if 2 seconds have passed
+            elapsed = time.time() - self.front_tile_reached_time
+            if elapsed >= self.front_tile_wait_duration:
+                hailo_logger.info("Front tile timer expired (%.1fs), triggering transition", elapsed)
+                return True
         else:
-            # Moving up (decreasing row numbers)
-            advanced = current_row < self.green_light_starting_row
-        
-        if advanced:
-            hailo_logger.info(
-                "Player advanced from row %d to row %d",
-                self.green_light_starting_row,
-                current_row
-            )
-            return True
+            # Reset timer if player moves away
+            if self.front_tile_reached_time is not None:
+                hailo_logger.debug("Player moved away from front tile, resetting timer")
+                self.front_tile_reached_time = None
         
         return False
     
@@ -394,6 +409,7 @@ class GameStateMachine:
                 self.flash_count = 0
                 self.last_flash_time = time.time()
                 self.state_duration = self.flash_interval * self.flash_total
+                self.front_tile_reached_time = None  # Reset timer
                 hailo_logger.info("Starting transition with %d flashes", self.flash_total)
 
     def reset(self) -> None:
@@ -408,6 +424,7 @@ class GameStateMachine:
         self.green_light_starting_row = None
         self.flash_count = 0
         self.last_flash_time = 0
+        self.front_tile_reached_time = None
 
         # Reset tile grid
         if self.tile_grid:

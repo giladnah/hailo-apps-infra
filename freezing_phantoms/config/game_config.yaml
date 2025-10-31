@@ -8,6 +8,7 @@ game:
   penalty_duration: 2.0                 # Penalty display duration (seconds)
   flash_interval: 0.25                  # Interval between flashes during transition (seconds)
   flash_total: 3                        # Number of flashes before red light
+  front_tile_wait_duration: 2.0         # Seconds to wait on front tile before transition
 
 # Tile grid configuration (5x10 grid)
 tile_grid:

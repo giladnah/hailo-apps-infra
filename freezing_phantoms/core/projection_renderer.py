@@ -272,13 +272,22 @@ class ProjectionRenderer:
         if self.board_effects:
             canvas = self.board_effects.render_lava_background(canvas, alpha=0.2)
 
+        # Check if lava step effect is active
+        lava_flash = False
+        if time.time() - self.lava_step_effect_time < self.lava_step_duration:
+            lava_flash = True
+
         # Render each tile at high intensity
         for tile in self.tile_grid.get_all_tiles():
             # Determine tile color based on state (bright, high intensity)
             if tile.state == TileState.GREEN:
                 color = (0, 255, 0)  # Bright green - safe
             else:  # RED
-                color = (0, 0, 255)  # Bright red - lava
+                # Flash red tiles bright white when lava is stepped on
+                if lava_flash:
+                    color = (255, 255, 255)  # White flash
+                else:
+                    color = (0, 0, 255)  # Bright red - lava
 
             # Draw tile with high opacity for visibility
             overlay = canvas.copy()

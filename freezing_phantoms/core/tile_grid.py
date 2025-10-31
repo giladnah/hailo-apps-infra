@@ -438,4 +438,28 @@ class TileGrid:
             Tile: Tile at player position.
         """
         return self.tiles[(self.player_row, self.player_col)]
+    
+    def remove_tiles_behind_player(self) -> None:
+        """
+        Remove (set to RED) all green tiles behind the player's current position.
+        Only affects tiles that are behind the player in the direction away from goal.
+        """
+        if self.goal_row > self.starting_row:
+            # Moving down (towards higher row numbers)
+            # Remove tiles with row < player_row
+            rows_to_remove = [r for r in range(self.starting_row, self.player_row)]
+        else:
+            # Moving up (towards lower row numbers)
+            # Remove tiles with row > player_row
+            rows_to_remove = [r for r in range(self.player_row + 1, self.starting_row + 1)]
+        
+        tiles_removed = 0
+        for row in rows_to_remove:
+            for col in range(self.cols):
+                if (row, col) in self.tiles and self.tiles[(row, col)].state == TileState.GREEN:
+                    self.tiles[(row, col)].state = TileState.RED
+                    tiles_removed += 1
+        
+        if tiles_removed > 0:
+            hailo_logger.info("Removed %d green tiles behind player (row %d)", tiles_removed, self.player_row)
 
