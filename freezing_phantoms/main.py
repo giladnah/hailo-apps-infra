@@ -134,6 +134,10 @@ class FreezingPhantomsGame:
         assets_path = Path(__file__).parent / "assets"
         self.audio_manager = AudioManager(assets_path)
         hailo_logger.info("Audio manager initialized")
+        
+        # Connect audio callback to game state (CRITICAL for audio to work!)
+        self.game_state.set_audio_callback(self.audio_manager.play_state_audio)
+        hailo_logger.info("✅ Audio callback connected to game state")
 
         # AI pipeline (will be started later)
         self.pipeline = None
@@ -278,13 +282,11 @@ class FreezingPhantomsGame:
                 # Update game state
                 self.game_state.update(dt, player_data)
 
-                # Play audio on state change
+                # Handle freeze sound stop when leaving RED_LIGHT
+                # (Audio callback will handle playing new state audio automatically)
                 if previous_state != self.game_state.current_state:
-                    # Stop freeze sound when leaving RED_LIGHT state
                     if previous_state == GameState.RED_LIGHT:
                         self.audio_manager.stop_freeze_sound()
-
-                    self.audio_manager.play_state_audio(self.game_state.current_state)
                     hailo_logger.debug(f"State changed: {previous_state.value} -> {self.game_state.current_state.value}")
 
                 # When transitioning to RED_LIGHT, set reference poses for movement detection
