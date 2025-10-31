@@ -283,6 +283,15 @@ class FreezingPhantomsGame:
                 game_stats = None
                 if self.game_state.current_state == GameState.WIN:
                     game_stats = self.game_state.get_game_stats()
+                
+                # Calculate current score for display
+                current_score = 0
+                if self.game_state.game_start_time:
+                    elapsed_time = time.time() - self.game_state.game_start_time
+                    base_score = 1000
+                    penalty_deduction = self.game_state.total_penalties * 100
+                    time_deduction = int(elapsed_time)
+                    current_score = max(0, base_score - penalty_deduction - time_deduction)
 
                 # Render projection frame
                 projection_frame = self.renderer.render_frame(
@@ -293,6 +302,8 @@ class FreezingPhantomsGame:
                     frame_height=self.camera_resolution[1],
                     violation_type=self.game_state.violation_type,
                     game_stats=game_stats,
+                    current_hearts=self.game_state.current_hearts,
+                    current_score=current_score,
                 )
 
                 # Display projection

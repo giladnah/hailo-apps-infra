@@ -104,8 +104,15 @@ class GameStateMachine:
         self.total_penalties = 0
         self.movement_penalties = 0
         self.lava_penalties = 0
+        
+        # Lives system (hearts)
+        self.starting_hearts = config.get("lives", {}).get("starting_hearts", 3)
+        self.current_hearts = self.starting_hearts
+        self.lose_heart_on_movement = config.get("lives", {}).get("lose_heart_on_movement", True)
+        self.lose_heart_on_lava = config.get("lives", {}).get("lose_heart_on_lava", False)
 
-        hailo_logger.info("Game state machine initialized in %s", self.current_state.value)
+        hailo_logger.info("Game state machine initialized in %s with %d hearts", 
+                         self.current_state.value, self.current_hearts)
 
     def update(self, dt: float, player_data: Optional[Dict]) -> None:  # noqa: ARG002
         """
@@ -253,7 +260,8 @@ class GameStateMachine:
 
     def register_caught_player(self, track_id: int) -> None:
         """
-        Register a player as caught.
+        Register a player as caught moving during red light.
+        Loses a heart and immediately ends red light phase.
 
         Args:
             track_id (int): Track ID of caught player.
@@ -262,7 +270,30 @@ class GameStateMachine:
             self.caught_players.append(track_id)
             self.movement_penalties += 1
             self.total_penalties += 1
-            hailo_logger.info("Player %d caught! Total penalties: %d", track_id, self.total_penalties)
+            
+            # Lose a heart if configured
+            if self.lose_heart_on_movement and self.current_hearts > 0:
+                self.current_hearts -= 1
+                hailo_logger.warning("Player %d caught! Lost heart. Hearts remaining: %d", 
+                                    track_id, self.current_hearts)
+                
+                # Check for game over
+                if self.current_hearts <= 0:
+                    hailo_logger.error("Player %d ran out of hearts! GAME OVER", track_id)
+                    self._change_state(GameState.GAME_OVER)
+                    self.state_duration = float("inf")
+                    return
+            
+            # Move player back one row immediately
+            if self.tile_grid:
+                # Apply penalty (move back 1 row as configured)
+                self.tile_grid.apply_penalty()
+                hailo_logger.info("Player moved back to row %d", self.tile_grid.player_row)
+            
+            # Immediately end red light and transition to penalty display
+            self._change_state(GameState.PENALTY)
+            self.state_duration = self.config["game"]["penalty_duration"]
+            self.violation_type = "movement"
 
     def register_tile_violation(self, track_id: int) -> None:
         """
@@ -445,13 +476,16 @@ class GameStateMachine:
         self.total_penalties = 0
         self.movement_penalties = 0
         self.lava_penalties = 0
+        
+        # Reset hearts
+        self.current_hearts = self.starting_hearts
 
         # Reset tile grid
         if self.tile_grid:
             self.tile_grid.reset()
             self.player_current_row = self.tile_grid.player_row
 
-        hailo_logger.info("Game state machine reset")
+        hailo_logger.info("Game state machine reset with %d hearts", self.current_hearts)
 
     def end_game(self) -> None:
         """Transition to game over state."""
@@ -499,7 +533,9 @@ class GameStateMachine:
             "movement_penalties": self.movement_penalties,
             "lava_penalties": self.lava_penalties,
             "score": final_score,
-            "rating": rating
+            "rating": rating,
+            "hearts_remaining": self.current_hearts,
+            "starting_hearts": self.starting_hearts
         }
 
     @property
