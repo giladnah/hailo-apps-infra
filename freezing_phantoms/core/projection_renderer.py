@@ -4,6 +4,7 @@ Projection renderer for Freezing Phantoms game.
 Renders game graphics using homography-based coordinate transformation.
 """
 
+import time
 from typing import Dict, List, Optional, Tuple
 
 import cv2
@@ -203,6 +204,11 @@ class ProjectionRenderer:
             canvas[y_pos:end_y, x_pos:end_x][mask] = text_region[mask]
 
         return canvas
+    
+    def trigger_lava_step_effect(self) -> None:
+        """Trigger visual effect for stepping on lava."""
+        self.lava_step_effect_time = time.time()
+        hailo_logger.debug("Lava step visual effect triggered")
 
     def render_frame(
         self,
