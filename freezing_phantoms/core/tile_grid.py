@@ -285,6 +285,19 @@ class TileGrid:
             if tile.contains_point(proj_x, proj_y):
                 return tile
         return None
+    
+    def is_position_on_board(self, proj_x: int, proj_y: int) -> bool:
+        """
+        Check if a position is within the game board area.
+
+        Args:
+            proj_x (int): X coordinate in projector space.
+            proj_y (int): Y coordinate in projector space.
+
+        Returns:
+            bool: True if position is on any tile in the board.
+        """
+        return self.get_tile_at_position(proj_x, proj_y) is not None
 
     def get_player_current_tile(
         self, leg_position_proj: Optional[Tuple[int, int]]

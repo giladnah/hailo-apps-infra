@@ -249,6 +249,12 @@ class FreezingPhantomsGame:
 
                 # Update game state
                 self.game_state.update(dt, player_data)
+                
+                # Print periodic debug info about tracked player (every 2 seconds)
+                current_time = time.time()
+                if current_time - self.last_debug_time >= 2.0:
+                    self._print_player_debug_info(player_data)
+                    self.last_debug_time = current_time
 
                 # Check for tile violations during GREEN_LIGHT
                 if self.game_state.current_state == GameState.GREEN_LIGHT and player_data:
