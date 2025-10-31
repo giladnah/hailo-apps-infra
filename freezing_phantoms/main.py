@@ -135,7 +135,7 @@ class FreezingPhantomsGame:
 
         # Terminal settings for non-blocking input
         self.old_terminal_settings = None
-        
+
         # Active player tracking
         self.active_player_id = None  # Track ID of player currently on board
         self.last_debug_time = 0  # For periodic debug output
@@ -252,13 +252,13 @@ class FreezingPhantomsGame:
                         # Filter to only include players on the game board
                         player_data = self._filter_players_on_board(all_player_data)
                         if player_data:
-                            hailo_logger.debug("Got player data: %d players (filtered from %d total)", 
+                            hailo_logger.debug("Got player data: %d players (filtered from %d total)",
                                              len(player_data.get('players', [])),
                                              len(all_player_data.get('players', [])))
 
                 # Update game state
                 self.game_state.update(dt, player_data)
-                
+
                 # Print periodic debug info about tracked player (every 2 seconds)
                 if current_time - self.last_debug_time >= 2.0:
                     self._print_player_debug_info(player_data)
@@ -268,12 +268,11 @@ class FreezingPhantomsGame:
                 if self.game_state.current_state == GameState.GREEN_LIGHT and player_data:
                     self._check_tile_violations(player_data)
                     
-                    # Remove green tiles behind player
-                    self.tile_grid.remove_tiles_behind_player()
-                    
                     # Check if player is on front tile for 2 seconds
                     if self.game_state.check_player_on_front_tile():
                         print("✓ Player on front tile for 2s! Starting transition to RED LIGHT...")
+                        # Remove tiles behind player when transitioning (not every frame)
+                        self.tile_grid.remove_tiles_behind_player()
                         self.game_state.trigger_transition_to_red_light(player_data)
 
                 # Check for movement during RED_LIGHT
@@ -303,7 +302,7 @@ class FreezingPhantomsGame:
                         hailo_logger.info("R pressed, restarting game")
                         self.game_state.reset()
                         print("\n♻️  Game restarted!\n")
-                    
+
                     # Sensitivity controls for freeze detection
                     elif key in ('+', '='):
                         # Increase sensitivity (lower threshold)
@@ -393,10 +392,10 @@ class FreezingPhantomsGame:
                 leg_x, leg_y = player.leg_position
                 proj_x, proj_y = self.renderer.transform_point(leg_x, leg_y)
                 current_tile = self.tile_grid.get_player_current_tile((proj_x, proj_y))
-                
+
                 tile_info = f"Row {current_tile.row}, Col {current_tile.col}" if current_tile else "No tile"
                 tile_state = current_tile.state.value if current_tile else "N/A"
-                
+
                 print(f"👤 Player ID: {player.track_id} | Position: ({proj_x}, {proj_y}) | "
                       f"Tile: {tile_info} | State: {tile_state} | "
                       f"Game Row: {self.tile_grid.player_row}/{self.tile_grid.current_revealed_row}")

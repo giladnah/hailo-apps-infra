@@ -456,14 +456,18 @@ class TileGrid:
         """
         Remove (set to RED) all green tiles behind the player's current position.
         Only affects tiles that are behind the player in the direction away from goal.
+        Keeps the player's current row green to ensure they always have a tile to stand on.
         """
+        # Always keep current revealed row green (player needs a tile!)
+        green_count_before = len(self.get_tiles_by_state(TileState.GREEN))
+        
         if self.goal_row > self.starting_row:
             # Moving down (towards higher row numbers)
-            # Remove tiles with row < player_row
+            # Remove tiles with row < player_row (but not current row)
             rows_to_remove = [r for r in range(self.starting_row, self.player_row)]
         else:
             # Moving up (towards lower row numbers)
-            # Remove tiles with row > player_row
+            # Remove tiles with row > player_row (but not current row)
             rows_to_remove = [r for r in range(self.player_row + 1, self.starting_row + 1)]
         
         tiles_removed = 0
@@ -473,6 +477,18 @@ class TileGrid:
                     self.tiles[(row, col)].state = TileState.RED
                     tiles_removed += 1
         
+        green_count_after = len(self.get_tiles_by_state(TileState.GREEN))
+        
         if tiles_removed > 0:
-            hailo_logger.info("Removed %d green tiles behind player (row %d)", tiles_removed, self.player_row)
+            hailo_logger.info(
+                "Removed %d green tiles behind player (row %d), %d green tiles remain",
+                tiles_removed,
+                self.player_row,
+                green_count_after
+            )
+        
+        # Safety check: ensure at least current revealed row has green tiles
+        if green_count_after == 0:
+            hailo_logger.error("ERROR: No green tiles remaining! Re-revealing current row %d", self.current_revealed_row)
+            self._reveal_row(self.current_revealed_row)
 
