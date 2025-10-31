@@ -135,6 +135,10 @@ class FreezingPhantomsGame:
 
         # Terminal settings for non-blocking input
         self.old_terminal_settings = None
+        
+        # Active player tracking
+        self.active_player_id = None  # Track ID of player currently on board
+        self.last_debug_time = 0  # For periodic debug output
 
         hailo_logger.info("Game initialization complete")
 
