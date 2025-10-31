@@ -346,27 +346,28 @@ class FreezingPhantomsGame:
                         self.lava_step_start_time.clear()  # Clear lava timers
                         print("\n♻️  Game restarted! Stand on green tile to begin.\n")
 
-                    # Sensitivity controls for freeze detection
+                    # Sensitivity controls for freeze detection (velocity-based)
                     elif key in ('+', '='):
-                        # Increase sensitivity (lower threshold)
-                        new_threshold = max(10.0, self.movement_detector.threshold_pixels - 10.0)
+                        # Increase sensitivity (lower velocity threshold)
+                        new_threshold = max(50.0, self.movement_detector.velocity_threshold - 20.0)
                         self.movement_detector.set_threshold(new_threshold)
-                        print(f"🔼 Freeze detection MORE sensitive: {new_threshold:.1f}px threshold")
+                        print(f"🔼 Freeze detection MORE sensitive: {new_threshold:.1f} px/s threshold")
                     elif key in ('-', '_'):
-                        # Decrease sensitivity (higher threshold)
-                        new_threshold = min(100.0, self.movement_detector.threshold_pixels + 10.0)
+                        # Decrease sensitivity (higher velocity threshold)
+                        new_threshold = min(300.0, self.movement_detector.velocity_threshold + 20.0)
                         self.movement_detector.set_threshold(new_threshold)
-                        print(f"🔽 Freeze detection LESS sensitive: {new_threshold:.1f}px threshold")
+                        print(f"🔽 Freeze detection LESS sensitive: {new_threshold:.1f} px/s threshold")
                     elif key in ('s', 'S'):
                         # Show current sensitivity settings
                         stats = self.movement_detector.get_smoothing_stats()
-                        print("\n=== Freeze Detection Settings ===")
-                        print(f"Threshold: {stats['threshold_pixels']:.1f}px")
-                        print(f"Effective threshold: {stats['effective_threshold']:.1f}px")
-                        print(f"Sensitivity multiplier: {stats['sensitivity_multiplier']:.2f}x")
-                        print(f"Smoothing alpha: {stats['smoothing_alpha']:.2f}")
-                        print(f"Pose history size: {stats['pose_history_size']}")
-                        print("=================================\n")
+                        print("\n=== Freeze Detection Settings (Velocity-Based) ===")
+                        print(f"Velocity threshold: {stats['velocity_threshold']:.1f} px/s")
+                        print(f"Position smoothing: {stats['position_smoothing_alpha']:.2f}")
+                        print(f"Velocity window: {stats['velocity_window_duration']:.2f}s")
+                        print(f"Min consecutive frames: {stats['min_consecutive_frames']}")
+                        print(f"Keypoint confidence: {stats['keypoint_confidence_threshold']:.2f}")
+                        print(f"Active tracks: {stats['active_tracks']}")
+                        print("==================================================\n")
 
                 # Still need cv2.waitKey for window event handling
                 cv2.waitKey(1)  # noqa: PGH003,E1101
