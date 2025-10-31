@@ -163,9 +163,9 @@ class DataExtractor:
             # Extract pose keypoints and confidence scores
             pose_keypoints, pose_keypoint_confidences = self._extract_pose_keypoints(detection, bbox)
 
-            # Calculate leg position from pose keypoints (average of ankle positions)
+            # Calculate leg position from pose keypoints (average of ankle positions and bbox bottom)
             leg_position, leg_confidence = self._calculate_leg_position_from_pose(
-                pose_keypoints, pose_keypoint_confidences
+                pose_keypoints, pose_keypoint_confidences, bbox
             )
 
             # Create player data object
@@ -237,16 +237,18 @@ class DataExtractor:
         return keypoints, confidences
 
     def _calculate_leg_position_from_pose(
-        self, pose_keypoints: Dict[str, tuple], pose_keypoint_confidences: Dict[str, float]
+        self, pose_keypoints: Dict[str, tuple], pose_keypoint_confidences: Dict[str, float], bbox
     ) -> Tuple[Optional[Tuple[float, float]], float]:
         """
         Calculate leg position from pose keypoints.
 
-        Uses the average of left and right ankle positions.
+        Uses the average between ankle positions and the bottom of the detection box
+        to better approximate foot location on the ground.
 
         Args:
             pose_keypoints: Dictionary of keypoint names to (x, y) coordinates.
             pose_keypoint_confidences: Dictionary of keypoint names to confidence scores.
+            bbox: Bounding box object containing detection boundaries.
 
         Returns:
             Tuple[Optional[Tuple[float, float]], float]:
@@ -258,32 +260,43 @@ class DataExtractor:
         left_conf = pose_keypoint_confidences.get("left_ankle", 0.0)
         right_conf = pose_keypoint_confidences.get("right_ankle", 0.0)
 
-        # If we have both ankles, average them
+        # Calculate bottom of detection box in pixel coordinates
+        bbox_bottom_y = (bbox.ymin() + bbox.height()) * self.frame_height
+
+        # If we have both ankles, average them with bbox bottom
         if left_ankle and right_ankle and left_conf > 0.3 and right_conf > 0.3:
-            leg_x = (left_ankle[0] + right_ankle[0]) / 2
-            leg_y = (left_ankle[1] + right_ankle[1]) / 2
+            ankle_x = (left_ankle[0] + right_ankle[0]) / 2
+            ankle_y = (left_ankle[1] + right_ankle[1]) / 2
+
+            # Average ankle position with bbox bottom to approximate foot position
+            leg_x = ankle_x
+            leg_y = (ankle_y + bbox_bottom_y) / 2
             confidence = (left_conf + right_conf) / 2
 
             hailo_logger.debug(
-                "Leg position from both ankles: (%.1f, %.1f) confidence=%.2f",
+                "Leg position from ankles + bbox bottom: (%.1f, %.1f) confidence=%.2f",
                 leg_x, leg_y, confidence
             )
             return (leg_x, leg_y), confidence
 
-        # If we only have one ankle, use that
+        # If we only have one ankle, use that with bbox bottom
         if left_ankle and left_conf > 0.3:
+            leg_x = left_ankle[0]
+            leg_y = (left_ankle[1] + bbox_bottom_y) / 2
             hailo_logger.debug(
-                "Leg position from left ankle: (%.1f, %.1f) confidence=%.2f",
-                left_ankle[0], left_ankle[1], left_conf
+                "Leg position from left ankle + bbox bottom: (%.1f, %.1f) confidence=%.2f",
+                leg_x, leg_y, left_conf
             )
-            return left_ankle, left_conf
+            return (leg_x, leg_y), left_conf
 
         if right_ankle and right_conf > 0.3:
+            leg_x = right_ankle[0]
+            leg_y = (right_ankle[1] + bbox_bottom_y) / 2
             hailo_logger.debug(
-                "Leg position from right ankle: (%.1f, %.1f) confidence=%.2f",
-                right_ankle[0], right_ankle[1], right_conf
+                "Leg position from right ankle + bbox bottom: (%.1f, %.1f) confidence=%.2f",
+                leg_x, leg_y, right_conf
             )
-            return right_ankle, right_conf
+            return (leg_x, leg_y), right_conf
 
         # Fallback: use hip position if ankles are not available
         left_hip = pose_keypoints.get("left_hip")

@@ -4,6 +4,20 @@ game:
   red_light_duration: [3.0, 5.0]    # Random range in seconds
   penalty_duration: 2.0
 
+tile_grid:
+  columns: 5
+  rows: 10
+  starting_row: 0  # Top (far from camera)
+  goal_row: 9  # Bottom (close to camera)
+  penalty_rows_back: 2  # Move back towards start (away from camera)
+  path_width: 1  # Number of safe tiles per row
+  obstacle_density: 0.3  # Percentage of non-path tiles that are red
+
+lava_floor:
+  texture_path: "lava-floor-2.jpg"
+  tile_border_thickness: 2
+  tile_border_color: [50, 50, 50]  # Dark gray
+
 movement:
   threshold_pixels: 20.0
   monitored_keypoints:

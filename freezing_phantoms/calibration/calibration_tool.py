@@ -2,6 +2,7 @@
 Camera-projector calibration tool using checkerboard patterns.
 """
 
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -103,6 +104,281 @@ class CalibrationTool:
 
         cv2.imshow(title, vis_image)
 
+    def _setup_camera_settings(self, camera_device: str) -> bool:
+        """
+        Apply fixed camera settings to disable auto-focus and auto-brightness.
+
+        Args:
+            camera_device (str): Camera device path (e.g., /dev/video0).
+
+        Returns:
+            bool: True if settings were applied successfully, False otherwise.
+        """
+        # Check if v4l2-ctl is available
+        try:
+            subprocess.run(
+                ["which", "v4l2-ctl"],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            hailo_logger.warning(
+                "v4l2-ctl not found. Camera auto-settings will not be disabled."
+            )
+            print("⚠️  v4l2-ctl not found - camera may adjust focus/brightness")
+            print("   Install with: sudo apt-get install v4l-utils")
+            return False
+
+        hailo_logger.info("Applying fixed camera settings for calibration...")
+        print("\n" + "="*70)
+        print("CAMERA SETUP")
+        print("="*70)
+        print("Disabling auto-focus and auto-brightness for stable calibration...")
+
+        success = True
+        settings_applied = []
+
+        # Disable auto-focus
+        try:
+            subprocess.run(
+                ["v4l2-ctl", "-d", camera_device, "--set-ctrl=focus_auto=0"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            subprocess.run(
+                ["v4l2-ctl", "-d", camera_device, "--set-ctrl=focus_absolute=0"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            settings_applied.append("✓ Auto-focus disabled")
+        except Exception as e:  # noqa: BLE001
+            hailo_logger.debug("Could not set focus: %s", e)
+
+        # Disable auto-exposure
+        try:
+            subprocess.run(
+                ["v4l2-ctl", "-d", camera_device, "--set-ctrl=exposure_auto=1"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            subprocess.run(
+                ["v4l2-ctl", "-d", camera_device, "--set-ctrl=exposure_absolute=200"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            settings_applied.append("✓ Auto-exposure disabled")
+        except Exception as e:  # noqa: BLE001
+            hailo_logger.debug("Could not set exposure: %s", e)
+
+        # Set fixed brightness
+        try:
+            subprocess.run(
+                ["v4l2-ctl", "-d", camera_device, "--set-ctrl=brightness=128"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            settings_applied.append("✓ Brightness set to fixed value")
+        except Exception as e:  # noqa: BLE001
+            hailo_logger.debug("Could not set brightness: %s", e)
+
+        # Disable auto white balance
+        try:
+            subprocess.run(
+                ["v4l2-ctl", "-d", camera_device, "--set-ctrl=white_balance_temperature_auto=0"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            subprocess.run(
+                ["v4l2-ctl", "-d", camera_device, "--set-ctrl=white_balance_temperature=4000"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            settings_applied.append("✓ Auto white balance disabled")
+        except Exception as e:  # noqa: BLE001
+            hailo_logger.debug("Could not set white balance: %s", e)
+
+        if settings_applied:
+            for msg in settings_applied:
+                print(msg)
+            print("="*70 + "\n")
+            hailo_logger.info("Camera settings applied successfully")
+        else:
+            print("⚠️  Could not apply camera settings (camera may not support these controls)")
+            print("="*70 + "\n")
+            hailo_logger.warning("No camera settings were applied")
+            success = False
+
+        return success
+
+    def _get_current_camera_settings(self, camera_device: str) -> dict:
+        """
+        Get current camera settings.
+
+        Args:
+            camera_device (str): Camera device path.
+
+        Returns:
+            dict: Current camera settings.
+        """
+        settings = {
+            "brightness": "N/A",
+            "exposure": "N/A",
+            "focus": "N/A",
+            "auto_exposure": "N/A",
+        }
+
+        try:
+            # Get brightness
+            result = subprocess.run(
+                ["v4l2-ctl", "-d", camera_device, "--get-ctrl=brightness"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                settings["brightness"] = result.stdout.strip().split(":")[-1].strip()
+
+            # Get exposure
+            result = subprocess.run(
+                ["v4l2-ctl", "-d", camera_device, "--get-ctrl=exposure_absolute"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                settings["exposure"] = result.stdout.strip().split(":")[-1].strip()
+
+            # Get focus
+            result = subprocess.run(
+                ["v4l2-ctl", "-d", camera_device, "--get-ctrl=focus_absolute"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                settings["focus"] = result.stdout.strip().split(":")[-1].strip()
+
+            # Get auto-exposure
+            result = subprocess.run(
+                ["v4l2-ctl", "-d", camera_device, "--get-ctrl=exposure_auto"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                auto_val = result.stdout.strip().split(":")[-1].strip()
+                settings["auto_exposure"] = "ON" if auto_val != "1" else "OFF"
+
+        except Exception as e:  # noqa: BLE001
+            hailo_logger.debug("Could not get camera settings: %s", e)
+
+        return settings
+
+    def _adjust_camera_setting(
+        self, camera_device: str, setting: str, delta: int, current_settings: dict
+    ) -> dict:
+        """
+        Adjust a camera setting by a delta value.
+
+        Args:
+            camera_device (str): Camera device path.
+            setting (str): Setting name ('brightness', 'exposure', 'focus').
+            delta (int): Change amount (positive or negative).
+            current_settings (dict): Current settings dictionary.
+
+        Returns:
+            dict: Updated settings dictionary.
+        """
+        setting_map = {
+            "brightness": "brightness",
+            "exposure": "exposure_absolute",
+            "focus": "focus_absolute",
+        }
+
+        if setting not in setting_map:
+            return current_settings
+
+        v4l2_param = setting_map[setting]
+
+        try:
+            # Get current value
+            result = subprocess.run(
+                ["v4l2-ctl", "-d", camera_device, f"--get-ctrl={v4l2_param}"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            if result.returncode == 0:
+                current_value = int(result.stdout.strip().split(":")[-1].strip())
+                new_value = max(0, min(255, current_value + delta))  # Clamp 0-255
+
+                # Set new value
+                subprocess.run(
+                    ["v4l2-ctl", "-d", camera_device, f"--set-ctrl={v4l2_param}={new_value}"],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+
+                print(f"  {setting.capitalize()}: {current_value} → {new_value}")
+                hailo_logger.debug("Adjusted %s from %d to %d", setting, current_value, new_value)
+
+        except Exception as e:  # noqa: BLE001
+            hailo_logger.debug("Could not adjust %s: %s", setting, e)
+
+        # Return updated settings
+        return self._get_current_camera_settings(camera_device)
+
+    def _toggle_auto_exposure(self, camera_device: str, current_settings: dict) -> dict:
+        """
+        Toggle auto-exposure on/off.
+
+        Args:
+            camera_device (str): Camera device path.
+            current_settings (dict): Current settings dictionary.
+
+        Returns:
+            dict: Updated settings dictionary.
+        """
+        try:
+            # Get current state
+            result = subprocess.run(
+                ["v4l2-ctl", "-d", camera_device, "--get-ctrl=exposure_auto"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            if result.returncode == 0:
+                current_value = int(result.stdout.strip().split(":")[-1].strip())
+                # Toggle: 1 = manual, 3 = auto
+                new_value = 3 if current_value == 1 else 1
+
+                subprocess.run(
+                    ["v4l2-ctl", "-d", camera_device, f"--set-ctrl=exposure_auto={new_value}"],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+
+                mode = "AUTO" if new_value == 3 else "MANUAL"
+                print(f"  Auto-Exposure: {mode}")
+                hailo_logger.debug("Toggled auto-exposure to %s", mode)
+
+        except Exception as e:  # noqa: BLE001
+            hailo_logger.debug("Could not toggle auto-exposure: %s", e)
+
+        return self._get_current_camera_settings(camera_device)
+
     def run_calibration(
         self,
         camera_source: str = "/dev/video0",
@@ -181,6 +457,12 @@ class CalibrationTool:
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_resolution[0])
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_resolution[1])
 
+            # Apply fixed camera settings (disable auto-focus, auto-brightness)
+            self._setup_camera_settings(camera_source)
+
+            # Give camera a moment to apply settings
+            time.sleep(0.5)
+
             # Create fullscreen window for projector
             window_name = "Calibration Pattern"
             cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
@@ -206,19 +488,28 @@ class CalibrationTool:
 
             hailo_logger.info("Pattern displayed. Capturing camera image...")
             print("\n" + "="*70)
-            print("CALIBRATION")
+            print("CALIBRATION - MANUAL CAMERA CONTROLS")
             print("="*70)
             print("1. Checkerboard is displayed on projector")
-            print("2. Press SPACE to capture image")
-            print("3. Press ESC to cancel")
+            print("2. Adjust camera settings if pattern is not visible:")
+            print("   1/2 - Decrease/Increase brightness")
+            print("   3/4 - Decrease/Increase exposure")
+            print("   5/6 - Decrease/Increase focus")
+            print("   A   - Toggle auto-exposure")
+            print("   R   - Reset to default values")
+            print("3. Press SPACE to capture image")
+            print("4. Press ESC to cancel")
             print("="*70)
-            print("\nWaiting for capture...\n")
+            print("\nAdjust camera settings until pattern is clearly visible...\n")
+
+            # Get initial camera settings
+            camera_settings = self._get_current_camera_settings(camera_source)
 
             # Wait for user to capture
             camera_image = None
-            camera_feed_window = "Camera Feed - Press SPACE to capture"
+            camera_feed_window = "Camera Feed - Adjust settings with B/E/F keys"
             cv2.namedWindow(camera_feed_window, cv2.WINDOW_NORMAL)
-            cv2.resizeWindow(camera_feed_window, 640, 480)
+            cv2.resizeWindow(camera_feed_window, 800, 600)
 
             time.sleep(0.5)
 
@@ -233,26 +524,58 @@ class CalibrationTool:
 
                 frame_count += 1
 
-                # Add instruction overlay
+                # Add instruction overlay with current settings
                 display_frame = frame.copy()
                 overlay = display_frame.copy()
-                cv2.rectangle(overlay, (0, 0), (display_frame.shape[1], 80), (0, 0, 0), -1)
-                cv2.addWeighted(overlay, 0.6, display_frame, 0.4, 0, display_frame)
+                cv2.rectangle(overlay, (0, 0), (display_frame.shape[1], 150), (0, 0, 0), -1)
+                cv2.addWeighted(overlay, 0.7, display_frame, 0.3, 0, display_frame)
+
+                # Instructions
                 cv2.putText(
                     display_frame,
-                    "PRESS SPACE TO CAPTURE",
-                    (10, 30),
+                    "SPACE=Capture | ESC=Cancel | 1-6=Adjust | A=Auto | R=Reset",
+                    (10, 25),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8,
+                    0.45,
                     (0, 255, 0),
-                    2,
+                    1,
+                )
+
+                # Current settings
+                y_offset = 50
+                cv2.putText(
+                    display_frame,
+                    f"Brightness: {camera_settings.get('brightness', 'N/A')} (1-/2+)",
+                    (10, y_offset),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 255, 255),
+                    1,
                 )
                 cv2.putText(
                     display_frame,
-                    "Press ESC to cancel",
-                    (10, 60),
+                    f"Exposure: {camera_settings.get('exposure', 'N/A')} (3-/4+)",
+                    (10, y_offset + 25),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
+                    0.5,
+                    (255, 255, 255),
+                    1,
+                )
+                cv2.putText(
+                    display_frame,
+                    f"Focus: {camera_settings.get('focus', 'N/A')} (5-/6+)",
+                    (10, y_offset + 50),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 255, 255),
+                    1,
+                )
+                cv2.putText(
+                    display_frame,
+                    f"Auto-Exposure: {camera_settings.get('auto_exposure', 'N/A')} (A=toggle)",
+                    (10, y_offset + 75),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
                     (255, 255, 255),
                     1,
                 )
@@ -272,6 +595,38 @@ class CalibrationTool:
                     print("\n✓ Image captured\n")
                     capture_successful = True
                     break
+
+                # Manual camera controls
+                elif key == ord("1"):  # Decrease brightness
+                    camera_settings = self._adjust_camera_setting(
+                        camera_source, "brightness", -10, camera_settings
+                    )
+                elif key == ord("2"):  # Increase brightness
+                    camera_settings = self._adjust_camera_setting(
+                        camera_source, "brightness", +10, camera_settings
+                    )
+                elif key == ord("3"):  # Decrease exposure
+                    camera_settings = self._adjust_camera_setting(
+                        camera_source, "exposure", -50, camera_settings
+                    )
+                elif key == ord("4"):  # Increase exposure
+                    camera_settings = self._adjust_camera_setting(
+                        camera_source, "exposure", +50, camera_settings
+                    )
+                elif key == ord("5"):  # Decrease focus
+                    camera_settings = self._adjust_camera_setting(
+                        camera_source, "focus", -10, camera_settings
+                    )
+                elif key == ord("6"):  # Increase focus
+                    camera_settings = self._adjust_camera_setting(
+                        camera_source, "focus", +10, camera_settings
+                    )
+                elif key == ord("A") or key == ord("a"):  # Toggle auto-exposure
+                    camera_settings = self._toggle_auto_exposure(camera_source, camera_settings)
+                elif key == ord("R") or key == ord("r"):  # Reset
+                    print("\n🔄 Resetting camera to default settings...")
+                    self._setup_camera_settings(camera_source)
+                    camera_settings = self._get_current_camera_settings(camera_source)
 
             cap.release()
             cv2.destroyAllWindows()

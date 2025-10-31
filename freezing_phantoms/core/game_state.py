@@ -23,6 +23,7 @@ class GameState(Enum):
         GREEN_LIGHT: Players can move.
         RED_LIGHT: Players must freeze.
         PENALTY: Display caught players.
+        WIN: Player reached the goal.
         GAME_OVER: Game ended.
     """
 
@@ -30,6 +31,7 @@ class GameState(Enum):
     GREEN_LIGHT = "green_light"
     RED_LIGHT = "red_light"
     PENALTY = "penalty"
+    WIN = "win"
     GAME_OVER = "game_over"
 
 
@@ -43,12 +45,13 @@ class GameStateMachine:
         config (dict): Game configuration.
     """
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, tile_grid=None):
         """
         Initialize game state machine.
 
         Args:
             config (dict): Game configuration dictionary.
+            tile_grid (TileGrid, optional): Reference to tile grid system.
         """
         self.config = config
         self.current_state = GameState.COUNTDOWN
@@ -61,13 +64,26 @@ class GameStateMachine:
         # Caught players
         self.caught_players = []  # List of track IDs
 
+        # Tile violation tracking
+        self.tile_violators = []  # List of track IDs who stepped on red tiles
+
+        # Tile grid reference
+        self.tile_grid = tile_grid
+
+        # Player position tracking
+        self.player_current_row = config.get("tile_grid", {}).get("starting_row", 9)
+        self.penalty_rows_back = config.get("tile_grid", {}).get("penalty_rows_back", 2)
+
+        # Violation type (for penalty display)
+        self.violation_type = None  # "movement" or "tile"
+
         # Audio callback (will be set by main app)
         self.audio_callback = None
 
         # State change listeners
         self.state_change_listeners = []
 
-        hailo_logger.info(f"Game state machine initialized in {self.current_state.value}")
+        hailo_logger.info("Game state machine initialized in %s", self.current_state.value)
 
     def update(self, dt: float, player_data: Optional[Dict]) -> None:  # noqa: ARG002
         """
@@ -98,31 +114,52 @@ class GameStateMachine:
             self._set_random_duration("green_light_duration")
 
         elif current == GameState.GREEN_LIGHT:
-            # Green Light -> Red Light
-            self._change_state(GameState.RED_LIGHT)
-            self._set_random_duration("red_light_duration")
+            # Check if player reached goal
+            if self.tile_grid and self.tile_grid.has_reached_goal():
+                self._change_state(GameState.WIN)
+                self.state_duration = float("inf")
+                hailo_logger.info("Player reached goal! Transitioning to WIN state")
+            else:
+                # Green Light -> Red Light
+                self._change_state(GameState.RED_LIGHT)
+                self._set_random_duration("red_light_duration")
 
-            # Store frozen poses
-            if player_data and "players" in player_data:
-                self.frozen_poses = player_data["players"]
-                hailo_logger.info(
-                    f"Stored {len(self.frozen_poses)} frozen poses for movement detection"
-                )
+                # Store frozen poses
+                if player_data and "players" in player_data:
+                    self.frozen_poses = player_data["players"]
+                    hailo_logger.info(
+                        "Stored %d frozen poses for movement detection", len(self.frozen_poses)
+                    )
 
         elif current == GameState.RED_LIGHT:
             # Red Light -> Penalty (if players caught) or Green Light
             if self.caught_players:
                 self._change_state(GameState.PENALTY)
                 self.state_duration = self.config["game"]["penalty_duration"]
+                self.violation_type = "movement"
+
+                # Apply penalty to tile grid
+                if self.tile_grid:
+                    self.tile_grid.apply_penalty()
             else:
+                # Advance path before green light
+                if self.tile_grid:
+                    self.tile_grid.advance_path(rows_to_reveal=1)
+
                 self._change_state(GameState.GREEN_LIGHT)
                 self._set_random_duration("green_light_duration")
 
         elif current == GameState.PENALTY:
             # Penalty -> Green Light
             self.caught_players = []  # Clear caught players
+            self.tile_violators = []  # Clear tile violators
+            self.violation_type = None
             self._change_state(GameState.GREEN_LIGHT)
             self._set_random_duration("green_light_duration")
+
+        elif current == GameState.WIN:
+            # Stay in win state
+            pass
 
         elif current == GameState.GAME_OVER:
             # Stay in game over
@@ -139,7 +176,7 @@ class GameStateMachine:
         self.current_state = new_state
         self.state_start_time = time.time()
 
-        hailo_logger.info(f"State transition: {old_state.value} -> {new_state.value}")
+        hailo_logger.info("State transition: %s -> %s", old_state.value, new_state.value)
 
         # Trigger audio callback
         if self.audio_callback:
@@ -159,8 +196,7 @@ class GameStateMachine:
         duration_range = self.config["game"][config_key]
         self.state_duration = random.uniform(duration_range[0], duration_range[1])
         hailo_logger.debug(
-            f"Set {config_key} duration to {self.state_duration:.1f}s "
-            f"(range: {duration_range})"
+            "Set %s duration to %.1fs (range: %s)", config_key, self.state_duration, duration_range
         )
 
     def register_caught_player(self, track_id: int) -> None:
@@ -172,7 +208,28 @@ class GameStateMachine:
         """
         if track_id not in self.caught_players:
             self.caught_players.append(track_id)
-            hailo_logger.info(f"Player {track_id} caught!")
+            hailo_logger.info("Player %d caught!", track_id)
+
+    def register_tile_violation(self, track_id: int) -> None:
+        """
+        Register a player who stepped on a red tile.
+
+        Args:
+            track_id (int): Track ID of violating player.
+        """
+        if track_id not in self.tile_violators:
+            self.tile_violators.append(track_id)
+            hailo_logger.info("Player %d stepped on lava!", track_id)
+
+            # Transition to penalty immediately
+            if self.current_state == GameState.GREEN_LIGHT:
+                self._change_state(GameState.PENALTY)
+                self.state_duration = self.config["game"]["penalty_duration"]
+                self.violation_type = "tile"
+
+                # Apply penalty to tile grid
+                if self.tile_grid:
+                    self.tile_grid.apply_penalty()
 
     def get_frozen_poses(self) -> List:
         """
@@ -242,7 +299,7 @@ class GameStateMachine:
         self._change_state(state)
         if duration is not None:
             self.state_duration = duration
-        hailo_logger.warning(f"Forced state change to {state.value}")
+        hailo_logger.warning("Forced state change to %s", state.value)
 
     def reset(self) -> None:
         """Reset the game state machine to initial state."""
@@ -251,6 +308,14 @@ class GameStateMachine:
         self.state_duration = self.config["game"]["countdown_duration"]
         self.frozen_poses = []
         self.caught_players = []
+        self.tile_violators = []
+        self.violation_type = None
+
+        # Reset tile grid
+        if self.tile_grid:
+            self.tile_grid.reset()
+            self.player_current_row = self.tile_grid.player_row
+
         hailo_logger.info("Game state machine reset")
 
     def end_game(self) -> None:
