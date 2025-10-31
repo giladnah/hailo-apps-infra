@@ -243,7 +243,8 @@ class MovementDetector:
         velocity_dict = {}
 
         for keypoint_name in self.monitored_keypoints:
-            # Collect velocities between consecutive frames
+            # Collect velocity magnitudes between consecutive frames
+            velocity_magnitudes = []
             velocities_x = []
             velocities_y = []
 
@@ -261,23 +262,26 @@ class MovementDetector:
                 x0, y0 = pose0[keypoint_name]
                 x1, y1 = pose1[keypoint_name]
 
-                # Calculate instantaneous velocity
+                # Calculate instantaneous velocity components
                 vx = (x1 - x0) / time_delta
                 vy = (y1 - y0) / time_delta
 
+                # Calculate magnitude for this frame pair
+                velocity_mag = math.sqrt(vx**2 + vy**2)
+                velocity_magnitudes.append(velocity_mag)
+                
                 velocities_x.append(vx)
                 velocities_y.append(vy)
 
-            if not velocities_x:
+            if not velocity_magnitudes:
                 continue
 
-            # Average the velocities
+            # Average the velocity magnitudes (more stable than averaging vectors)
+            velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
+
+            # Store average velocity vector for visualization
             avg_vx = sum(velocities_x) / len(velocities_x)
             avg_vy = sum(velocities_y) / len(velocities_y)
-
-            # Calculate magnitude
-            velocity_magnitude = math.sqrt(avg_vx**2 + avg_vy**2)
-
             velocity_dict[keypoint_name] = (avg_vx, avg_vy)
 
             if velocity_magnitude > max_velocity:
