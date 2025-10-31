@@ -7,8 +7,11 @@ Orchestrates all components: AI pipeline, game logic, projection, and audio.
 import argparse
 import logging
 import os
+import select
 import sys
+import termios
 import time
+import tty
 from pathlib import Path
 
 import cv2
@@ -129,7 +132,31 @@ class FreezingPhantomsGame:
         self.running = False
         self.last_frame_time = 0
 
+        # Terminal settings for non-blocking input
+        self.old_terminal_settings = None
+
         hailo_logger.info("Game initialization complete")
+
+    def _get_terminal_key(self) -> Optional[str]:
+        """
+        Get keyboard input from terminal (non-blocking).
+        
+        Returns:
+            Optional[str]: Key pressed, or None if no key.
+        """
+        if select.select([sys.stdin], [], [], 0)[0]:
+            return sys.stdin.read(1)
+        return None
+
+    def _setup_terminal(self) -> None:
+        """Set terminal to non-blocking raw mode."""
+        self.old_terminal_settings = termios.tcgetattr(sys.stdin)
+        tty.setcbreak(sys.stdin.fileno())
+
+    def _restore_terminal(self) -> None:
+        """Restore terminal to original mode."""
+        if self.old_terminal_settings:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_terminal_settings)
 
     def start_pipeline(self, video_source: str = "/dev/video0") -> None:
         """
@@ -178,6 +205,10 @@ class FreezingPhantomsGame:
     def run(self) -> None:
         """Run the main game loop."""
         hailo_logger.info("Starting Red Light Green Light game loop...")
+        
+        # Setup terminal for non-blocking input
+        self._setup_terminal()
+        
         print("\n" + "=" * 60)
         print("RED LIGHT GREEN LIGHT - Floor is Lava Edition")
         print("=" * 60)
@@ -219,16 +250,21 @@ class FreezingPhantomsGame:
                 self.game_state.update(dt, player_data)
 
                 # Check for tile violations during GREEN_LIGHT
-                if self.game_state.current == GameState.GREEN_LIGHT and player_data:
+                if self.game_state.current_state == GameState.GREEN_LIGHT and player_data:
                     self._check_tile_violations(player_data)
+                    
+                    # Check if player has advanced to next row
+                    if self.game_state.check_player_advancement():
+                        print("✓ Player advanced! Starting transition to RED LIGHT...")
+                        self.game_state.trigger_transition_to_red_light(player_data)
 
                 # Check for movement during RED_LIGHT
-                if self.game_state.current == GameState.RED_LIGHT and player_data:
+                if self.game_state.current_state == GameState.RED_LIGHT and player_data:
                     self._check_for_movement(player_data)
 
                 # Render projection frame
                 projection_frame = self.renderer.render_frame(
-                    state=self.game_state.current,
+                    state=self.game_state.current_state,
                     player_data=player_data,
                     caught_players=self.game_state.get_caught_players(),
                     frame_width=self.camera_resolution[0],
@@ -239,36 +275,41 @@ class FreezingPhantomsGame:
                 # Display projection
                 self.renderer.display(projection_frame)
 
-                # Handle keyboard input
-                key = cv2.waitKey(1) & 0xFF  # noqa: PGH003,E1101
-                if key == 27:  # ESC
-                    hailo_logger.info("ESC pressed, exiting game")
-                    self.running = False
-                elif key == ord('r') or key == ord('R'):
-                    hailo_logger.info("R pressed, restarting game")
-                    self.game_state.reset()
+                # Handle keyboard input from terminal (non-blocking)
+                key = self._get_terminal_key()
+                if key:
+                    if key == '\x1b':  # ESC
+                        hailo_logger.info("ESC pressed, exiting game")
+                        self.running = False
+                    elif key in ('r', 'R'):
+                        hailo_logger.info("R pressed, restarting game")
+                        self.game_state.reset()
+                        print("\n♻️  Game restarted!\n")
+                    
+                    # Sensitivity controls for freeze detection
+                    elif key in ('+', '='):
+                        # Increase sensitivity (lower threshold)
+                        new_threshold = max(5.0, self.movement_detector.threshold_pixels - 5.0)
+                        self.movement_detector.set_threshold(new_threshold)
+                        print(f"🔼 Freeze detection MORE sensitive: {new_threshold:.1f}px threshold")
+                    elif key in ('-', '_'):
+                        # Decrease sensitivity (higher threshold)
+                        new_threshold = min(50.0, self.movement_detector.threshold_pixels + 5.0)
+                        self.movement_detector.set_threshold(new_threshold)
+                        print(f"🔽 Freeze detection LESS sensitive: {new_threshold:.1f}px threshold")
+                    elif key in ('s', 'S'):
+                        # Show current sensitivity settings
+                        stats = self.movement_detector.get_smoothing_stats()
+                        print("\n=== Freeze Detection Settings ===")
+                        print(f"Threshold: {stats['threshold_pixels']:.1f}px")
+                        print(f"Effective threshold: {stats['effective_threshold']:.1f}px")
+                        print(f"Sensitivity multiplier: {stats['sensitivity_multiplier']:.2f}x")
+                        print(f"Smoothing alpha: {stats['smoothing_alpha']:.2f}")
+                        print(f"Pose history size: {stats['pose_history_size']}")
+                        print("=================================\n")
                 
-                # Sensitivity controls for freeze detection
-                elif key == ord('+') or key == ord('='):
-                    # Increase sensitivity (lower threshold)
-                    new_threshold = max(5.0, self.movement_detector.threshold_pixels - 5.0)
-                    self.movement_detector.set_threshold(new_threshold)
-                    print(f"Freeze detection MORE sensitive: {new_threshold:.1f}px threshold")
-                elif key == ord('-') or key == ord('_'):
-                    # Decrease sensitivity (higher threshold)
-                    new_threshold = min(50.0, self.movement_detector.threshold_pixels + 5.0)
-                    self.movement_detector.set_threshold(new_threshold)
-                    print(f"Freeze detection LESS sensitive: {new_threshold:.1f}px threshold")
-                elif key == ord('s') or key == ord('S'):
-                    # Show current sensitivity settings
-                    stats = self.movement_detector.get_smoothing_stats()
-                    print("\n=== Freeze Detection Settings ===")
-                    print(f"Threshold: {stats['threshold_pixels']:.1f}px")
-                    print(f"Effective threshold: {stats['effective_threshold']:.1f}px")
-                    print(f"Sensitivity multiplier: {stats['sensitivity_multiplier']:.2f}x")
-                    print(f"Smoothing alpha: {stats['smoothing_alpha']:.2f}")
-                    print(f"Pose history size: {stats['pose_history_size']}")
-                    print("=================================\n")
+                # Still need cv2.waitKey for window event handling
+                cv2.waitKey(1)  # noqa: PGH003,E1101
 
                 # Maintain frame rate
                 target_frame_time = 1.0 / 30  # 30 FPS

@@ -239,6 +239,8 @@ class ProjectionRenderer:
             canvas = self._render_countdown(canvas)
         elif state == GameState.GREEN_LIGHT:
             canvas = self._render_green_light(canvas, player_data, frame_width, frame_height)
+        elif state == GameState.TRANSITION:
+            canvas = self._render_transition(canvas, player_data, frame_width, frame_height)
         elif state == GameState.RED_LIGHT:
             canvas = self._render_red_light(canvas, player_data, frame_width, frame_height)
         elif state == GameState.PENALTY:
@@ -395,6 +397,55 @@ class ProjectionRenderer:
 
         return canvas
 
+    def _render_transition(
+        self,
+        canvas: np.ndarray,
+        player_data: Optional[Dict],
+        frame_width: int,  # noqa: ARG002
+        frame_height: int,  # noqa: ARG002
+    ) -> np.ndarray:
+        """
+        Render transition state (flashing between green and red).
+
+        Args:
+            canvas (np.ndarray): Canvas to render on.
+            player_data (Optional[Dict]): Player data.
+            frame_width (int): Frame width.
+            frame_height (int): Frame height.
+
+        Returns:
+            np.ndarray: Rendered canvas.
+        """
+        # Flash effect - alternate between green and dark every 0.25s
+        flash_on = (int(self.frame_counter / 15) % 2) == 0  # ~0.25s at 60fps
+        
+        if flash_on:
+            # Bright flash - render normal green light
+            canvas = self._render_tile_grid(canvas, alpha=1.0)
+        else:
+            # Dark - black out
+            canvas[:, :] = (0, 0, 0)  # Black
+            canvas = self._render_tile_grid(canvas, alpha=0.2)
+        
+        # Render player position indicator (always visible)
+        if player_data and "players" in player_data and self.tile_grid:
+            for player in player_data["players"]:
+                # Get leg position and transform to projector space
+                if hasattr(player, 'leg_position') and player.leg_position:
+                    leg_x, leg_y = player.leg_position
+                    proj_x, proj_y = self.transform_point(leg_x, leg_y)
+
+                    # Update tile grid with player position
+                    self.tile_grid.get_player_current_tile((proj_x, proj_y))
+
+                    # Render player indicator
+                    if self.board_effects:
+                        canvas = self.board_effects.render_player_indicator(
+                            canvas, proj_x, proj_y, color=(255, 255, 0)  # Yellow for transition
+                        )
+
+        return canvas
+
     def _render_red_light(
         self,
         canvas: np.ndarray,
@@ -417,8 +468,8 @@ class ProjectionRenderer:
         # Red tint overlay
         canvas[:, :] = (10, 0, 30)  # Dark red background
 
-        # Render tile grid at high intensity (keep visible during red light)
-        canvas = self._render_tile_grid(canvas, alpha=0.9)
+        # Render tile grid at reduced intensity during freeze
+        canvas = self._render_tile_grid(canvas, alpha=0.4)
 
         # Draw scanning laser effect
         laser_y = int((self.frame_counter * 5) % canvas.shape[0])

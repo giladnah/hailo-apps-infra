@@ -21,6 +21,7 @@ class GameState(Enum):
     States:
         COUNTDOWN: Initial countdown before game starts.
         GREEN_LIGHT: Players can move.
+        TRANSITION: Flashing transition to red light.
         RED_LIGHT: Players must freeze.
         PENALTY: Display caught players.
         WIN: Player reached the goal.
@@ -29,6 +30,7 @@ class GameState(Enum):
 
     COUNTDOWN = "countdown"
     GREEN_LIGHT = "green_light"
+    TRANSITION = "transition"
     RED_LIGHT = "red_light"
     PENALTY = "penalty"
     WIN = "win"
@@ -83,6 +85,15 @@ class GameStateMachine:
         # State change listeners
         self.state_change_listeners = []
 
+        # Track player's starting row at beginning of green light
+        self.green_light_starting_row = None
+
+        # Flashing transition parameters
+        self.flash_count = 0
+        self.last_flash_time = 0
+        self.flash_interval = config.get("game", {}).get("flash_interval", 0.75)
+        self.flash_total = config.get("game", {}).get("flash_total", 3)
+
         hailo_logger.info("Game state machine initialized in %s", self.current_state.value)
 
     def update(self, dt: float, player_data: Optional[Dict]) -> None:  # noqa: ARG002
@@ -93,11 +104,24 @@ class GameStateMachine:
             dt (float): Time delta since last update.
             player_data (Optional[Dict]): Current player data from pipeline.
         """
-        elapsed_time = time.time() - self.state_start_time
+        # Handle flashing transition state
+        if self.current_state == GameState.TRANSITION:
+            current_time = time.time()
+            if current_time - self.last_flash_time >= self.flash_interval:
+                self.flash_count += 1
+                self.last_flash_time = current_time
+                hailo_logger.debug("Flash %d/%d", self.flash_count, self.flash_total)
+                
+                # After all flashes, transition to red light
+                if self.flash_count >= self.flash_total:
+                    self._transition_to_next_state(player_data)
+        else:
+            # Normal time-based transitions for other states
+            elapsed_time = time.time() - self.state_start_time
 
-        # Check if state duration expired
-        if elapsed_time >= self.state_duration:
-            self._transition_to_next_state(player_data)
+            # Check if state duration expired
+            if elapsed_time >= self.state_duration:
+                self._transition_to_next_state(player_data)
 
     def _transition_to_next_state(self, player_data: Optional[Dict]) -> None:
         """
@@ -111,25 +135,32 @@ class GameStateMachine:
         if current == GameState.COUNTDOWN:
             # Countdown -> Green Light
             self._change_state(GameState.GREEN_LIGHT)
-            self._set_random_duration("green_light_duration")
+            self.state_duration = float("inf")  # No time limit, ends when player advances
+            
+            # Store player's starting row
+            if self.tile_grid:
+                self.green_light_starting_row = self.tile_grid.player_row
+                hailo_logger.info("Green light started at row %d", self.green_light_starting_row)
 
         elif current == GameState.GREEN_LIGHT:
-            # Check if player reached goal
-            if self.tile_grid and self.tile_grid.has_reached_goal():
-                self._change_state(GameState.WIN)
-                self.state_duration = float("inf")
-                hailo_logger.info("Player reached goal! Transitioning to WIN state")
-            else:
-                # Green Light -> Red Light
-                self._change_state(GameState.RED_LIGHT)
-                self._set_random_duration("red_light_duration")
+            # This transition is now triggered manually, not by timer
+            # See check_player_advancement()
+            pass
 
-                # Store frozen poses
-                if player_data and "players" in player_data:
-                    self.frozen_poses = player_data["players"]
-                    hailo_logger.info(
-                        "Stored %d frozen poses for movement detection", len(self.frozen_poses)
-                    )
+        elif current == GameState.TRANSITION:
+            # Transition -> Red Light after flashing completes
+            self._change_state(GameState.RED_LIGHT)
+            self._set_random_duration("red_light_duration")
+            
+            # Reset flash counter
+            self.flash_count = 0
+            
+            # Store frozen poses
+            if player_data and "players" in player_data:
+                self.frozen_poses = player_data["players"]
+                hailo_logger.info(
+                    "Stored %d frozen poses for movement detection", len(self.frozen_poses)
+                )
 
         elif current == GameState.RED_LIGHT:
             # Red Light -> Penalty (if players caught) or Green Light
@@ -147,7 +178,12 @@ class GameStateMachine:
                     self.tile_grid.advance_path(rows_to_reveal=1)
 
                 self._change_state(GameState.GREEN_LIGHT)
-                self._set_random_duration("green_light_duration")
+                self.state_duration = float("inf")  # No time limit, ends when player advances
+                
+                # Store player's starting row
+                if self.tile_grid:
+                    self.green_light_starting_row = self.tile_grid.player_row
+                    hailo_logger.info("Green light started at row %d", self.green_light_starting_row)
 
         elif current == GameState.PENALTY:
             # Penalty -> Green Light
@@ -155,7 +191,12 @@ class GameStateMachine:
             self.tile_violators = []  # Clear tile violators
             self.violation_type = None
             self._change_state(GameState.GREEN_LIGHT)
-            self._set_random_duration("green_light_duration")
+            self.state_duration = float("inf")  # No time limit, ends when player advances
+            
+            # Store player's starting row
+            if self.tile_grid:
+                self.green_light_starting_row = self.tile_grid.player_row
+                hailo_logger.info("Green light started at row %d", self.green_light_starting_row)
 
         elif current == GameState.WIN:
             # Stay in win state
@@ -301,6 +342,60 @@ class GameStateMachine:
             self.state_duration = duration
         hailo_logger.warning("Forced state change to %s", state.value)
 
+    def check_player_advancement(self) -> bool:
+        """
+        Check if player has advanced to a new revealed row during green light.
+        
+        Returns:
+            bool: True if player advanced to a new row.
+        """
+        if self.current_state != GameState.GREEN_LIGHT:
+            return False
+        
+        if not self.tile_grid or self.green_light_starting_row is None:
+            return False
+        
+        current_row = self.tile_grid.player_row
+        
+        # Check if player moved forward towards goal
+        if self.tile_grid.goal_row > self.tile_grid.starting_row:
+            # Moving down (increasing row numbers)
+            advanced = current_row > self.green_light_starting_row
+        else:
+            # Moving up (decreasing row numbers)
+            advanced = current_row < self.green_light_starting_row
+        
+        if advanced:
+            hailo_logger.info(
+                "Player advanced from row %d to row %d",
+                self.green_light_starting_row,
+                current_row
+            )
+            return True
+        
+        return False
+    
+    def trigger_transition_to_red_light(self, player_data: Optional[Dict] = None) -> None:
+        """
+        Trigger flashing transition to red light.
+        
+        Args:
+            player_data (Optional[Dict]): Current player data.
+        """
+        if self.current_state == GameState.GREEN_LIGHT:
+            # Check for win condition first
+            if self.tile_grid and self.tile_grid.has_reached_goal():
+                self._change_state(GameState.WIN)
+                self.state_duration = float("inf")
+                hailo_logger.info("Player reached goal! Transitioning to WIN state")
+            else:
+                # Start flashing transition
+                self._change_state(GameState.TRANSITION)
+                self.flash_count = 0
+                self.last_flash_time = time.time()
+                self.state_duration = self.flash_interval * self.flash_total
+                hailo_logger.info("Starting transition with %d flashes", self.flash_total)
+
     def reset(self) -> None:
         """Reset the game state machine to initial state."""
         self.current_state = GameState.COUNTDOWN
@@ -310,6 +405,9 @@ class GameStateMachine:
         self.caught_players = []
         self.tile_violators = []
         self.violation_type = None
+        self.green_light_starting_row = None
+        self.flash_count = 0
+        self.last_flash_time = 0
 
         # Reset tile grid
         if self.tile_grid:

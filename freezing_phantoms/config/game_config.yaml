@@ -3,9 +3,11 @@
 # Game timing and duration settings
 game:
   countdown_duration: 3.0              # Countdown time before game starts (seconds)
-  green_light_duration: [5.0, 8.0]     # Green light duration range (min, max) seconds
+  green_light_duration: [5.0, 8.0]     # Green light duration range (min, max) seconds - NOT USED, ends when player advances
   red_light_duration: [3.0, 5.0]       # Red light duration range (min, max) seconds
   penalty_duration: 2.0                 # Penalty display duration (seconds)
+  flash_interval: 0.25                  # Interval between flashes during transition (seconds)
+  flash_total: 3                        # Number of flashes before red light
 
 # Tile grid configuration (5x10 grid)
 tile_grid:
