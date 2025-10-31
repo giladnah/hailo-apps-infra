@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, dev ]
+    paths:
+      - 'freezing_phantoms/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [ main, dev ]
+    paths:
+      - 'freezing_phantoms/**'
+
+jobs:
+  lint:
+    name: Lint and Format Check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        working-directory: freezing_phantoms
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install black isort flake8 mypy pytest bandit
+
+      - name: Check code formatting with black
+        working-directory: freezing_phantoms
+        run: black --check --line-length 100 .
+
+      - name: Check import sorting with isort
+        working-directory: freezing_phantoms
+        run: isort --check-only --profile black --line-length 100 .
+
+      - name: Lint with flake8
+        working-directory: freezing_phantoms
+        run: flake8 . --max-line-length=100 --extend-ignore=E203,W503 --exclude=__pycache__,*.pyc,.git
+
+      - name: Type check with mypy
+        working-directory: freezing_phantoms
+        run: mypy . --ignore-missing-imports --no-strict-optional
+        continue-on-error: true  # Don't fail on type errors for now
+
+      - name: Security check with bandit
+        working-directory: freezing_phantoms
+        run: bandit -r . -c pyproject.toml
+        continue-on-error: true  # Don't fail on security warnings for now
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        working-directory: freezing_phantoms
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run unit tests
+        working-directory: freezing_phantoms
+        run: |
+          pytest tests/ -v --cov=. --cov-report=xml --cov-report=term
+        continue-on-error: true  # Some tests may require hardware
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: freezing_phantoms/coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+        continue-on-error: true
+
+  docs:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check README
+        working-directory: freezing_phantoms
+        run: |
+          if [ ! -f README.md ]; then
+            echo "README.md not found!"
+            exit 1
+          fi
+          if [ ! -s README.md ]; then
+            echo "README.md is empty!"
+            exit 1
+          fi
+
+      - name: Check for required documentation sections
+        working-directory: freezing_phantoms
+        run: |
+          required_sections=("Installation" "Usage" "Configuration")
+          for section in "${required_sections[@]}"; do
+            if ! grep -q "$section" README.md; then
+              echo "Missing documentation section: $section"
+              exit 1
+            fi
+          done
+
+      - name: Check Python docstrings
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install pydocstyle
+        run: pip install pydocstyle
+
+      - name: Check docstrings
+        working-directory: freezing_phantoms
+        run: pydocstyle --convention=google --add-ignore=D100,D104,D105,D107 .
+        continue-on-error: true
+

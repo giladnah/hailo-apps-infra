@@ -437,6 +437,122 @@ class ProjectionRenderer:
         """
         cv2.imshow(self.window_name, frame)
 
+    def render_simple_pose_landmarks(
+        self,
+        player_data: Optional[Dict],
+        frame_width: int,
+        frame_height: int,
+    ) -> np.ndarray:
+        """
+        Render only pose landmarks projected through homography (for calibration testing).
+
+        Args:
+            player_data: Player data dictionary.
+            frame_width: Camera frame width.
+            frame_height: Camera frame height.
+
+        Returns:
+            np.ndarray: Rendered frame with pose landmarks.
+        """
+        # Create blank canvas
+        canvas = np.zeros((self.projector_resolution[1], self.projector_resolution[0], 3), dtype=np.uint8)
+
+        if not player_data or "players" not in player_data:
+            return canvas
+
+        # Draw pose keypoints for each player
+        for player in player_data["players"]:
+            pose_keypoints = player.pose_keypoints
+            pose_confidences = player.pose_keypoint_confidences
+            track_id = player.track_id
+
+            # Define color for this player
+            colors = [
+                (0, 255, 0),    # Green
+                (0, 255, 255),  # Yellow
+                (255, 0, 255),  # Magenta
+                (255, 128, 0),  # Orange
+                (0, 128, 255),  # Light blue
+            ]
+            color = colors[track_id % len(colors)]
+
+            # Draw each keypoint
+            for keypoint_name, (cam_x, cam_y) in pose_keypoints.items():
+                confidence = pose_confidences.get(keypoint_name, 0.0)
+
+                # Only draw keypoints with sufficient confidence
+                if confidence < 0.3:
+                    continue
+
+                # Transform to projector coordinates
+                proj_x, proj_y = self.transform_point(cam_x, cam_y)
+
+                # Check if point is within bounds
+                if 0 <= proj_x < self.projector_resolution[0] and 0 <= proj_y < self.projector_resolution[1]:
+                    # Draw circle for keypoint
+                    radius = int(5 + confidence * 10)  # Size based on confidence
+                    cv2.circle(canvas, (proj_x, proj_y), radius, color, -1)
+
+                    # Draw small label with keypoint name
+                    cv2.putText(
+                        canvas,
+                        keypoint_name[:4],  # First 4 chars
+                        (proj_x + 5, proj_y - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.3,
+                        color,
+                        1
+                    )
+
+            # Draw leg position if available
+            if hasattr(player, 'leg_position') and player.leg_position:
+                leg_x, leg_y = player.leg_position
+                proj_x, proj_y = self.transform_point(leg_x, leg_y)
+
+                if 0 <= proj_x < self.projector_resolution[0] and 0 <= proj_y < self.projector_resolution[1]:
+                    # Draw larger circle for leg position
+                    cv2.circle(canvas, (proj_x, proj_y), 15, (255, 255, 255), 2)
+                    cv2.putText(
+                        canvas,
+                        f"Player {track_id}",
+                        (proj_x - 30, proj_y - 20),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (255, 255, 255),
+                        1
+                    )
+
+        # Draw info text
+        cv2.putText(
+            canvas,
+            "Pose Landmarks Projection Test",
+            (20, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (255, 255, 255),
+            2
+        )
+        cv2.putText(
+            canvas,
+            f"Players detected: {len(player_data.get('players', []))}",
+            (20, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (255, 255, 255),
+            1
+        )
+        cv2.putText(
+            canvas,
+            "Press ESC to exit",
+            (20, self.projector_resolution[1] - 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (200, 200, 200),
+            1
+        )
+
+        return canvas
+
     def cleanup(self) -> None:
         """Clean up renderer resources."""
         cv2.destroyWindow(self.window_name)

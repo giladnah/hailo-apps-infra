@@ -21,11 +21,11 @@ movement:
   keypoint_confidence_threshold: 0.5  # 0-1, minimum confidence score for keypoints to use
 
 camera:
-  resolution: [1280, 720]
+  resolution: [1280, 720]  # 720p resolution (matches pipeline and calibration)
   fps: 30
 
 projector:
-  resolution: [1280, 720]
+  resolution: [1280, 720]  # 720p resolution (matches camera and calibration)
   display_index: 1  # Secondary display (0 = primary, 1 = secondary)
 
 calibration:

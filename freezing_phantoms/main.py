@@ -17,14 +17,15 @@ import yaml
 
 from hailo_apps.hailo_app_python.core.common.hailo_logger import get_logger
 from freezing_phantoms.calibration.calibration_tool import CalibrationTool
-from freezing_phantoms.core.audio_manager import AudioManager
-from freezing_phantoms.core.board_system import BoardSystem
-from freezing_phantoms.core.game_state import GameState, GameStateMachine
-from freezing_phantoms.core.ghost_system import GhostManager
-from freezing_phantoms.core.movement_detector import MovementDetector
+# Disabled for simple visualization mode:
+# from freezing_phantoms.core.audio_manager import AudioManager
+# from freezing_phantoms.core.board_system import BoardSystem
+# from freezing_phantoms.core.game_state import GameState, GameStateMachine
+# from freezing_phantoms.core.ghost_system import GhostManager
+# from freezing_phantoms.core.movement_detector import MovementDetector
+# from freezing_phantoms.effects.board_effects import BoardEffects
 from freezing_phantoms.core.projection_renderer import ProjectionRenderer
-from freezing_phantoms.effects.board_effects import BoardEffects
-from freezing_phantoms.pipeline.combined_pipeline import CombinedPoseSegmentationPipeline
+from freezing_phantoms.pipeline.combined_pipeline import PoseEstimationPipeline
 
 hailo_logger = get_logger(__name__)
 
@@ -76,51 +77,22 @@ class FreezingPhantomsGame:
         self.fps = self.config["camera"]["fps"]
 
         # Initialize components
-        hailo_logger.info("Initializing game components...")
+        hailo_logger.info("Initializing pose visualization (simplified mode)...")
 
-        # Game state machine
-        self.game_state = GameStateMachine(self.config)
-
-        # Movement detector
-        self.movement_detector = MovementDetector(
-            threshold_pixels=self.config["movement"]["threshold_pixels"],
-            monitored_keypoints=self.config["movement"]["monitored_keypoints"],
-            smoothing_alpha=self.config["movement"]["smoothing_alpha"],
-            pose_history_size=self.config["movement"]["pose_history_size"],
-            sensitivity_multiplier=self.config["movement"]["sensitivity_multiplier"],
-            keypoint_confidence_threshold=self.config["movement"]["keypoint_confidence_threshold"],
-        )
-
-        # Projection renderer
+        # Projection renderer (only component needed for simple visualization)
         self.renderer = ProjectionRenderer(
             homography_matrix=self.homography_matrix,
             projector_resolution=self.projector_resolution,
             display_index=self.config["projector"]["display_index"],
         )
 
-        # Audio manager
-        assets_path = Path(__file__).parent / "assets"
-        self.audio_manager = AudioManager(assets_path)
-
-        # Create placeholder audio files if they don't exist
-        self.audio_manager.create_placeholder_sounds()
-
-        # Register audio callback with game state
-        self.game_state.set_audio_callback(self.audio_manager.play_state_audio)
-
-        # Board system
-        board_config = self.config.get("board", {})
-        self.board_system = BoardSystem(board_config)
-
-        # Ghost manager
-        self.ghost_manager = GhostManager(board_config, self.board_system)
-
-        # Board effects
-        self.board_effects = BoardEffects(
-            self.board_system,
-            self.ghost_manager,
-            debug_mode=self.debug_mode
-        )
+        # Disabled game components for simple visualization mode
+        # self.game_state = GameStateMachine(self.config)
+        # self.movement_detector = MovementDetector(...)
+        # self.audio_manager = AudioManager(assets_path)
+        # self.board_system = BoardSystem(board_config)
+        # self.ghost_manager = GhostManager(board_config, self.board_system)
+        # self.board_effects = BoardEffects(...)
 
         # AI pipeline (will be started later)
         self.pipeline = None
@@ -143,10 +115,12 @@ class FreezingPhantomsGame:
         # Use frame rate from Hailo options if provided, otherwise use config
         frame_rate = getattr(self.hailo_options, 'frame_rate', None) or self.fps
 
-        self.pipeline = CombinedPoseSegmentationPipeline(
+        # Force 720p resolution (1280x720) to match calibration
+        hailo_logger.info("Using 720p resolution: 1280x720")
+        self.pipeline = PoseEstimationPipeline(
             video_source=video_source,
-            frame_width=self.camera_resolution[0],
-            frame_height=self.camera_resolution[1],
+            frame_width=1280,
+            frame_height=720,
             frame_rate=frame_rate,
             debug_mode=self.debug_mode,
             hailo_options=self.hailo_options,
@@ -160,13 +134,14 @@ class FreezingPhantomsGame:
 
     def run(self) -> None:
         """Run the main game loop."""
-        hailo_logger.info("Starting game loop...")
+        hailo_logger.info("Starting pose visualization loop...")
         print("\n" + "=" * 60)
-        print("FREEZING PHANTOMS - AI HALLOWEEN GAME")
+        print("POSE LANDMARKS VISUALIZATION")
         print("=" * 60)
+        print("Displaying pose keypoints projected through calibration.")
+        print("")
         print("Controls:")
-        print("  ESC - Quit game")
-        print("  R   - Reset game")
+        print("  ESC - Quit")
         print("=" * 60 + "\n")
 
         self.running = True
@@ -175,7 +150,7 @@ class FreezingPhantomsGame:
         try:
             while self.running:
                 current_time = time.time()
-                dt = current_time - self.last_frame_time
+                # dt = current_time - self.last_frame_time  # Not used in simple mode
                 self.last_frame_time = current_time
 
                 # Get latest player data from pipeline
@@ -187,64 +162,21 @@ class FreezingPhantomsGame:
                     else:
                         hailo_logger.debug("No player data from pipeline")
 
-                # Update game state
-                self.game_state.update(dt, player_data)
-
-                # Update board system (ghosts)
-                if player_data and "players" in player_data:
-                    # Extract leg positions for ghost AI
-                    player_positions = {}
-                    for player in player_data["players"]:
-                        if hasattr(player, 'leg_position') and player.leg_position is not None:
-                            # Transform leg position to projector coordinates
-                            projector_pos = self.renderer.transform_point(player.leg_position[0], player.leg_position[1])
-                            if projector_pos is not None:
-                                player_positions[player.track_id] = projector_pos
-
-                    # Update ghosts with player positions
-                    self.ghost_manager.update(player_positions, dt)
-
-                # Check for board collisions
-                if player_data and "players" in player_data:
-                    self._check_board_collisions(player_data)
-
-                # Check for movement during RED_LIGHT
-                if self.game_state.current == GameState.RED_LIGHT:
-                    if player_data:
-                        hailo_logger.debug("RED_LIGHT: Checking movement for %d players", len(player_data.get('players', [])))
-                        self._check_for_movement(player_data)
-                    else:
-                        hailo_logger.debug("RED_LIGHT: No player data available for movement check")
-
-                # Render projection frame
-                projection_frame = self.renderer.render_frame(
-                    state=self.game_state.current,
-                    player_data=player_data,
-                    caught_players=self.game_state.get_caught_players(),
-                    frame_width=self.camera_resolution[0],
-                    frame_height=self.camera_resolution[1],
-                )
-
-                # Render board elements (obstacles, ghosts, debug)
-                projection_frame = self.board_effects.render_board(
-                    projection_frame,
-                    self.renderer.transform_point,
+                # SIMPLE MODE: Just render pose landmarks (no game logic)
+                projection_frame = self.renderer.render_simple_pose_landmarks(
                     player_data,
                     self.camera_resolution[0],
-                    self.camera_resolution[1]
+                    self.camera_resolution[1],
                 )
 
                 # Display projection
                 self.renderer.display(projection_frame)
 
                 # Handle keyboard input
-                key = cv2.waitKey(1) & 0xFF  # noqa: PGH003
+                key = cv2.waitKey(1) & 0xFF  # noqa: PGH003,E1101
                 if key == 27:  # ESC
-                    hailo_logger.info("ESC pressed, exiting game")
+                    hailo_logger.info("ESC pressed, exiting visualization")
                     self.running = False
-                elif key == ord('r') or key == ord('R'):  # Reset
-                    hailo_logger.info("Reset requested")
-                    self.game_state.reset()
 
                 # Maintain frame rate
                 target_frame_time = 1.0 / 30  # 30 FPS
@@ -261,94 +193,25 @@ class FreezingPhantomsGame:
         finally:
             self.cleanup()
 
-    def _check_for_movement(self, player_data: dict) -> None:
-        """
-        Check for player movement during RED_LIGHT state.
-
-        Args:
-            player_data (dict): Current player data.
-        """
-        frozen_poses = self.game_state.get_frozen_poses()
-
-        hailo_logger.debug("_check_for_movement called: frozen_poses=%d, "
-                          f"player_data={'players' in player_data if player_data else False}")
-
-        if not frozen_poses:
-            hailo_logger.debug("No frozen poses available")
-            return
-
-        if not player_data or "players" not in player_data:
-            hailo_logger.debug("No player data or 'players' key missing")
-            return
-
-        current_players = player_data["players"]
-        hailo_logger.debug("Checking movement: %d frozen, %d current", len(frozen_poses), len(current_players))
-
-        # Detect movement for each player
-        movement_results = self.movement_detector.detect_player_movement(
-            frozen_poses, current_players
-        )
-
-        hailo_logger.debug("Movement results: %d players checked", len(movement_results))
-
-        # Register caught players
-        for track_id, (moved, displacement, keypoint) in movement_results.items():
-            if moved:
-                self.game_state.register_caught_player(track_id)
-                hailo_logger.info(
-                    "Player %d moved! %s displaced %.1fpx",
-                    track_id, keypoint, displacement
-                )
-
-    def _check_board_collisions(self, player_data: dict) -> None:
-        """
-        Check for collisions between players and board elements.
-
-        Args:
-            player_data (dict): Current player data.
-        """
-        if not player_data or "players" not in player_data:
-            return
-
-        for player in player_data["players"]:
-            if not hasattr(player, 'leg_position') or player.leg_position is None:
-                continue
-
-            # Transform leg position to projector coordinates
-            projector_pos = self.renderer.transform_point(player.leg_position[0], player.leg_position[1])
-            if projector_pos is None:
-                continue
-
-            # Check for collisions with board
-            collision_radius = 15.0  # Collision radius around player
-            if self.board_system.check_collision(projector_pos, collision_radius):
-                hailo_logger.info(
-                    "Player %d collided with board obstacle at (%.1f, %.1f)",
-                    player.track_id, projector_pos[0], projector_pos[1]
-                )
-
-                # Register as caught player for collision
-                self.game_state.register_caught_player(player.track_id)
-
-                # You could add specific collision effects here
-                # For example, different penalties for different obstacle types
+    # Disabled game methods (not needed in simple visualization mode)
+    # def _check_for_movement(self, player_data: dict) -> None:
+    #     ...
+    # def _check_board_collisions(self, player_data: dict) -> None:
+    #     ...
 
     def cleanup(self) -> None:
         """Clean up all resources."""
-        hailo_logger.info("Cleaning up game resources...")
+        hailo_logger.info("Cleaning up visualization resources...")
 
         # Stop pipeline
         if self.pipeline:
             self.pipeline.stop()
 
-        # Clean up audio
-        self.audio_manager.cleanup()
-
         # Clean up renderer
         self.renderer.cleanup()
 
         # Close all OpenCV windows
-        cv2.destroyAllWindows()  # noqa: PGH003
+        cv2.destroyAllWindows()  # noqa: PGH003,E1101
 
         hailo_logger.info("Cleanup complete")
 

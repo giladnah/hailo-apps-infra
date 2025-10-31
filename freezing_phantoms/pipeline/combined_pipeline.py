@@ -1,14 +1,13 @@
 """
-Combined Hailo pipeline for pose estimation and instance segmentation.
+Hailo pipeline for pose estimation only.
 
-Runs both AI models on the same video stream to extract comprehensive player data.
+Simplified pipeline for Freezing Phantoms game using only pose estimation at 720p.
 """
 
 import os
 import queue
 import sys
 import threading
-from pathlib import Path
 
 import gi
 
@@ -20,16 +19,9 @@ import setproctitle
 from hailo_apps.hailo_app_python.core.common.core import get_default_parser, get_resource_path
 from hailo_apps.hailo_app_python.core.common.defines import (
     HAILO_ARCH_KEY,
-    INSTANCE_SEGMENTATION_MODEL_NAME_H8,
-    INSTANCE_SEGMENTATION_MODEL_NAME_H8L,
-    INSTANCE_SEGMENTATION_PIPELINE,
-    INSTANCE_SEGMENTATION_POSTPROCESS_FUNCTION,
-    INSTANCE_SEGMENTATION_POSTPROCESS_SO_FILENAME,
-    JSON_FILE_EXTENSION,
     POSE_ESTIMATION_PIPELINE,
     POSE_ESTIMATION_POSTPROCESS_FUNCTION,
     POSE_ESTIMATION_POSTPROCESS_SO_FILENAME,
-    RESOURCES_JSON_DIR_NAME,
     RESOURCES_MODELS_DIR_NAME,
     RESOURCES_SO_DIR_NAME,
 )
@@ -41,8 +33,8 @@ from hailo_apps.hailo_app_python.core.gstreamer.gstreamer_app import (
 )
 from hailo_apps.hailo_app_python.core.gstreamer.gstreamer_helper_pipelines import (
     INFERENCE_PIPELINE,
+    INFERENCE_PIPELINE_WRAPPER,
     QUEUE,
-    SOURCE_PIPELINE,
     TRACKER_PIPELINE,
 )
 from freezing_phantoms.pipeline.data_extractor import DataExtractor
@@ -134,37 +126,36 @@ def game_pipeline_callback(pad, info, user_data: GameCallbackClass):  # noqa: AR
     return Gst.PadProbeReturn.OK
 
 
-class CombinedPoseSegmentationPipeline(GStreamerApp):
+class PoseEstimationPipeline(GStreamerApp):
     """
-    Combined pipeline running pose estimation and instance segmentation.
+    Simplified pipeline running only pose estimation.
 
-    This pipeline processes video frames through both models to extract:
+    This pipeline processes video frames at 720p to extract:
     - Person detection with tracking IDs
     - Pose keypoints (17 COCO keypoints)
-    - Instance segmentation masks
     """
 
     def __init__(
         self,
         video_source: str = "/dev/video0",
-        frame_width: int = 640,
-        frame_height: int = 640,
+        frame_width: int = 1280,
+        frame_height: int = 720,
         frame_rate: int = 30,
         debug_mode: bool = False,
         hailo_options=None,
     ):
         """
-        Initialize combined pipeline.
+        Initialize pose estimation pipeline.
 
         Args:
             video_source (str): Video source (device path or file).
-            frame_width (int): Frame width.
-            frame_height (int): Frame height.
+            frame_width (int): Frame width (default 1280 for 720p).
+            frame_height (int): Frame height (default 720 for 720p).
             frame_rate (int): Frame rate.
             debug_mode (bool): If True, show video output with AI overlays.
             hailo_options: Parsed Hailo standard options (arch, hef-path, etc.)
         """
-        hailo_logger.info("Initializing CombinedPoseSegmentationPipeline")
+        hailo_logger.info("Initializing PoseEstimationPipeline at %dx%d", frame_width, frame_height)
 
         # Store debug mode flag and options
         self.debug_mode = debug_mode
@@ -234,73 +225,36 @@ class CombinedPoseSegmentationPipeline(GStreamerApp):
         hailo_logger.info("Using Hailo architecture: %s", self.arch)
 
         # Setup pose estimation resources
-        # Use custom HEF path if provided, otherwise use default
         if self.custom_hailo_options and getattr(self.custom_hailo_options, 'hef_path', None):
-            # If custom HEF is provided, it's assumed to be for pose estimation
-            # (game requires both pose and segmentation)
-            hailo_logger.warning("Custom HEF path provided but game requires both pose and segmentation models")
-            self.pose_hef_path = self.custom_hailo_options.hef_path
+            self.hef_path = self.custom_hailo_options.hef_path
+            hailo_logger.info("Using custom HEF path: %s", self.hef_path)
         else:
-            self.pose_hef_path = str(
+            self.hef_path = str(
                 get_resource_path(POSE_ESTIMATION_PIPELINE, RESOURCES_MODELS_DIR_NAME)
             )
+            hailo_logger.info("Using default HEF path: %s", self.hef_path)
 
-        self.pose_post_so = str(
+        self.post_process_so = str(
             get_resource_path(
                 POSE_ESTIMATION_PIPELINE,
                 RESOURCES_SO_DIR_NAME,
                 POSE_ESTIMATION_POSTPROCESS_SO_FILENAME,
             )
         )
-        self.pose_post_function = POSE_ESTIMATION_POSTPROCESS_FUNCTION
+        self.post_process_function = POSE_ESTIMATION_POSTPROCESS_FUNCTION
 
-        # Setup segmentation resources
-        self.seg_hef_path = str(
-            get_resource_path(INSTANCE_SEGMENTATION_PIPELINE, RESOURCES_MODELS_DIR_NAME)
-        )
-        self.seg_post_so = str(
-            get_resource_path(
-                INSTANCE_SEGMENTATION_PIPELINE,
-                RESOURCES_SO_DIR_NAME,
-                INSTANCE_SEGMENTATION_POSTPROCESS_SO_FILENAME,
-            )
-        )
-        self.seg_post_function = INSTANCE_SEGMENTATION_POSTPROCESS_FUNCTION
-
-        # Determine segmentation config file
-        hef_name = Path(self.seg_hef_path).name
-        if INSTANCE_SEGMENTATION_MODEL_NAME_H8 in hef_name:
-            self.seg_config_file = str(
-                get_resource_path(
-                    INSTANCE_SEGMENTATION_PIPELINE,
-                    RESOURCES_JSON_DIR_NAME,
-                    INSTANCE_SEGMENTATION_MODEL_NAME_H8 + JSON_FILE_EXTENSION,
-                )
-            )
-        elif INSTANCE_SEGMENTATION_MODEL_NAME_H8L in hef_name:
-            self.seg_config_file = str(
-                get_resource_path(
-                    INSTANCE_SEGMENTATION_PIPELINE,
-                    RESOURCES_JSON_DIR_NAME,
-                    INSTANCE_SEGMENTATION_MODEL_NAME_H8L + JSON_FILE_EXTENSION,
-                )
-            )
-        else:
-            hailo_logger.warning("Unknown segmentation HEF: %s, using default config", hef_name)
-            self.seg_config_file = None
-
-        hailo_logger.info("Pose HEF: %s", self.pose_hef_path)
-        hailo_logger.info("Segmentation HEF: %s", self.seg_hef_path)
+        hailo_logger.info("Post-process SO: %s", self.post_process_so)
+        hailo_logger.info("Post-process function: %s", self.post_process_function)
 
         # Set process title
-        setproctitle.setproctitle("Freezing Phantoms - AI Pipeline")
+        setproctitle.setproctitle("Freezing Phantoms - Pose Pipeline")
 
         # Callback
         self.app_callback = game_pipeline_callback
 
-        # Create pipeline (custom implementation without display)
+        # Create pipeline
         self._create_game_pipeline()
-        hailo_logger.info("Combined pipeline created successfully")
+        hailo_logger.info("Pose estimation pipeline created successfully")
 
         # Pipeline thread
         self._pipeline_thread = None
@@ -338,45 +292,31 @@ class CombinedPoseSegmentationPipeline(GStreamerApp):
 
     def get_pipeline_string(self) -> str:
         """
-        Build the combined pipeline string.
+        Build the pose estimation pipeline string.
 
         Returns:
             str: GStreamer pipeline string.
         """
-        hailo_logger.debug("Building combined pipeline string")
+        hailo_logger.debug("Building pose estimation pipeline string at %dx%d",
+                          self.frame_width, self.frame_height)
 
-        # Source pipeline
-        source = SOURCE_PIPELINE(
-            video_source=self.video_source,
-            video_width=self.frame_width,
-            video_height=self.frame_height,
-            frame_rate=self.frame_rate,
-            sync=self.sync,
-        )
+        # Custom source pipeline WITHOUT horizontal flip (camera and projector on same axis)
+        # Based on SOURCE_PIPELINE but removes videoflip element
+        source = self._create_source_pipeline_no_flip()
 
         # Pose estimation inference
-        pose_infer = INFERENCE_PIPELINE(
-            hef_path=self.pose_hef_path,
-            post_process_so=self.pose_post_so,
-            post_function_name=self.pose_post_function,
+        infer = INFERENCE_PIPELINE(
+            hef_path=self.hef_path,
+            post_process_so=self.post_process_so,
+            post_function_name=self.post_process_function,
             batch_size=self.batch_size,
-            name="pose",
-            vdevice_group_id=1,
         )
+
+        # Wrap inference pipeline to maintain resolution
+        infer_wrapper = INFERENCE_PIPELINE_WRAPPER(infer)
 
         # Tracker (after pose detection)
         tracker = TRACKER_PIPELINE(class_id=0)
-
-        # Segmentation inference
-        seg_infer = INFERENCE_PIPELINE(
-            hef_path=self.seg_hef_path,
-            post_process_so=self.seg_post_so,
-            post_function_name=self.seg_post_function,
-            batch_size=self.batch_size,
-            config_json=self.seg_config_file,
-            name="segmentation",
-            vdevice_group_id=1,
-        )
 
         # User callback (probe point) - identity element for callback attachment
         callback_queue = QUEUE(name="callback_q")
@@ -390,19 +330,71 @@ class CombinedPoseSegmentationPipeline(GStreamerApp):
             sink = "fakesink name=game_sink sync=false"
             hailo_logger.info("Game mode: Using fakesink (no display)")
 
-        # Combine all elements
+        # Combine all elements with wrapper
         pipeline_string = (
             f"{source} ! "
-            f"{pose_infer} ! "
+            f"{infer_wrapper} ! "
             f"{tracker} ! "
-            f"{seg_infer} ! "
             f"{callback_queue} ! "
             f"{identity_callback} ! "
             f"{sink}"
         )
 
-        hailo_logger.debug("Pipeline: %s", pipeline_string)
+        hailo_logger.info("Pipeline configured: %dx%d @ %d fps",
+                         self.frame_width, self.frame_height, self.frame_rate)
+        hailo_logger.debug("Pipeline string: %s", pipeline_string)
         return pipeline_string
+
+    def _create_source_pipeline_no_flip(self) -> str:
+        """
+        Create source pipeline WITHOUT horizontal flip.
+
+        Camera and projector are on the same axis, so no flip is needed.
+        This is a simplified version of SOURCE_PIPELINE without videoflip.
+
+        Returns:
+            str: GStreamer source pipeline string.
+        """
+        # Determine source type
+        video_source = self.video_source
+        if video_source.startswith('/dev/video'):
+            # USB camera - use MJPEG compression for better performance at 720p
+            width, height = 1280, 720  # Camera resolution (closest to our target)
+            source_element = (
+                f'v4l2src device={video_source} name=source ! '
+                f'image/jpeg, framerate=30/1, width={width}, height={height} ! '
+                f'{QUEUE(name="source_queue_decode")} ! '
+                f'decodebin name=source_decodebin ! '
+                # NOTE: videoflip removed - camera and projector on same axis
+            )
+        else:
+            # File source or other
+            source_element = (
+                f'filesrc location="{video_source}" ! '
+                f'{QUEUE(name="source_queue_decode")} ! '
+                f'decodebin name=source_decodebin ! '
+            )
+
+        # FPS caps based on sync setting
+        if self.sync:
+            fps_caps = f"video/x-raw, framerate={self.frame_rate}/1"
+        else:
+            fps_caps = "video/x-raw"
+
+        # Complete source pipeline
+        source_pipeline = (
+            f"{source_element} "
+            f"{QUEUE(name='source_scale_q')} ! "
+            f"videoscale name=source_videoscale n-threads=2 ! "
+            f"{QUEUE(name='source_convert_q')} ! "
+            f"videoconvert n-threads=3 name=source_convert qos=false ! "
+            f"video/x-raw, pixel-aspect-ratio=1/1, format=RGB, "
+            f"width={self.frame_width}, height={self.frame_height} ! "
+            f'videorate name=source_videorate ! capsfilter name=source_fps_caps caps="{fps_caps}" '
+        )
+
+        hailo_logger.info("Created source pipeline WITHOUT horizontal flip (same-axis camera)")
+        return source_pipeline
 
     def start(self) -> None:
         """Start the pipeline in a separate thread."""
