@@ -131,9 +131,13 @@ class TileGrid:
         self.path_width = path_width
         self.obstacle_density = obstacle_density
 
-        # Calculate tile dimensions
+        # Calculate tile dimensions with perspective
         self.tile_width = projector_width // cols
-        self.tile_height = projector_height // rows
+        
+        # Calculate row heights with perspective scaling
+        # Top rows (far from camera) are thinner, bottom rows (close) are thicker
+        self.row_heights = self._calculate_perspective_row_heights(projector_height, rows)
+        self.tile_height = sum(self.row_heights) // rows  # Average height for reference
 
         # Initialize grid
         self.tiles: Dict[Tuple[int, int], Tile] = {}
@@ -158,23 +162,68 @@ class TileGrid:
             self.tile_height,
         )
 
+    def _calculate_perspective_row_heights(self, total_height: int, num_rows: int) -> List[int]:
+        """
+        Calculate row heights with perspective scaling.
+        Top rows (far from camera) are thinner, bottom rows (close) are thicker.
+
+        Args:
+            total_height (int): Total available height in pixels.
+            num_rows (int): Number of rows.
+
+        Returns:
+            List[int]: Height in pixels for each row (index 0 = top/far, index n-1 = bottom/close).
+        """
+        # Use linear perspective scaling: row 0 (top/far) = 0.7x, row n-1 (bottom/close) = 1.3x
+        # Scaling factor increases linearly from top to bottom
+        scale_min = 0.7  # Top row scale
+        scale_max = 1.3  # Bottom row scale
+        
+        # Calculate scale for each row
+        scales = []
+        for row in range(num_rows):
+            # Linear interpolation from scale_min to scale_max
+            t = row / max(1, num_rows - 1)  # 0.0 at top, 1.0 at bottom
+            scale = scale_min + (scale_max - scale_min) * t
+            scales.append(scale)
+        
+        # Calculate base height that makes total equal to total_height
+        sum_scales = sum(scales)
+        base_height = total_height / sum_scales
+        
+        # Calculate actual heights
+        row_heights = [int(base_height * scale) for scale in scales]
+        
+        # Adjust last row to ensure exact total
+        row_heights[-1] = total_height - sum(row_heights[:-1])
+        
+        return row_heights
+
     def _initialize_grid(self, projector_width: int, projector_height: int) -> None:
         """
-        Initialize the grid with tiles.
+        Initialize the grid with tiles using perspective-scaled row heights.
         All tiles start as RED (lava) - they will be revealed as GREEN progressively.
 
         Args:
             projector_width (int): Projector width in pixels.
             projector_height (int): Projector height in pixels.
         """
+        # Calculate cumulative Y positions for each row
+        cumulative_y = 0
+        row_y_positions = []
+        for row_height in self.row_heights:
+            row_y_positions.append(cumulative_y)
+            cumulative_y += row_height
+        
         for row in range(self.rows):
             for col in range(self.cols):
                 proj_x = col * self.tile_width
-                proj_y = row * self.tile_height
+                proj_y = row_y_positions[row]
+                row_height = self.row_heights[row]
 
                 # Ensure tiles don't exceed projector bounds
                 actual_width = min(self.tile_width, projector_width - proj_x)
-                actual_height = min(self.tile_height, projector_height - proj_y)
+                actual_height = min(row_height, projector_height - proj_y)
 
                 tile = Tile(
                     row=row,

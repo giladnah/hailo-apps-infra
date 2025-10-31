@@ -84,7 +84,8 @@ class MovementDetector:
             self.monitored_keypoints = monitored_keypoints
 
         # Smoothed pose history with timestamps: {track_id: deque of (timestamp, smoothed_pose)}
-        max_history_frames = int(fps * velocity_window_duration * 2)  # Keep 2x window for safety
+        # Need at least 1 second (fps frames) for bootstrap, plus velocity window
+        max_history_frames = max(int(fps * 1.0), int(fps * velocity_window_duration * 2)) + 5
         self.pose_history_timestamped: Dict[int, deque] = {}
 
         # Last smoothed pose for EMA: {track_id: {keypoint: (x, y)}}
