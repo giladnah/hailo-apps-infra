@@ -2,11 +2,12 @@
 Camera-projector calibration tool using checkerboard patterns.
 """
 
+import json
 import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -378,6 +379,28 @@ class CalibrationTool:
             hailo_logger.debug("Could not toggle auto-exposure: %s", e)
 
         return self._get_current_camera_settings(camera_device)
+
+    def _save_camera_settings(self, camera_device: str, output_path: Path) -> None:
+        """
+        Save current camera settings to a JSON file.
+
+        Args:
+            camera_device (str): Camera device path (e.g., "/dev/video0").
+            output_path (Path): Path to save camera settings JSON file.
+        """
+        try:
+            settings = self._get_current_camera_settings(camera_device)
+            
+            # Convert output_path to have .json extension
+            settings_path = output_path.with_suffix('.json').parent / (output_path.stem + '_camera_settings.json')
+            
+            with open(settings_path, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=2)
+            
+            print(f"✓ Camera settings saved to {settings_path}")
+            hailo_logger.info("Saved camera settings to %s", settings_path)
+        except Exception as e:  # noqa: BLE001
+            hailo_logger.warning("Could not save camera settings: %s", e)
 
     def run_calibration(
         self,
@@ -844,6 +867,9 @@ class CalibrationTool:
                         np.save(output_path, homography_matrix)
                         hailo_logger.info(f"Saved final calibration to {output_path}")
                         print(f"✓ Calibration saved to {output_path}")
+                        
+                        # Save camera settings alongside calibration
+                        self._save_camera_settings(camera_source, output_path)
 
                     # Save final result to history
                     final_file = history_dir / "final_homography.npy"
@@ -863,6 +889,9 @@ class CalibrationTool:
                     np.save(output_path, homography_matrix)
                     hailo_logger.info(f"Saved to {output_path}")
                     print(f"\n✓ Calibration successful! Saved to {output_path}\n")
+                    
+                    # Save camera settings alongside calibration
+                    self._save_camera_settings(camera_source, output_path)
 
                 return homography_matrix
 

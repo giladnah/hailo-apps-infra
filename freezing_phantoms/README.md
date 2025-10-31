@@ -1,420 +1,412 @@
-# Freezing Phantoms
+# Freezing Phantoms - Red Light, Green Light Game
 
-An AI-augmented Halloween game using Hailo AI for real-time player tracking and projection mapping.
+An AI-powered "Red Light, Green Light" game with floor-is-lava theme using Hailo AI for real-time player tracking and projection mapping.
 
 ## Overview
 
-"Freezing Phantoms" is an interactive projection-mapped game based on the classic "Red Light, Green Light" (known in Hebrew as "Dag Maluach"). The game uses a Hailo-powered AI pipeline to track children in a play area, projecting dynamic graphics and game elements onto the floor and the players themselves.
+"Freezing Phantoms" is an interactive projection-mapped game based on the classic "Red Light, Green Light". Players navigate a 5x10 tile grid projected on the floor, avoiding red lava tiles while racing to the goal. The game uses Hailo AI for real-time pose estimation to track player position and detect movement during freeze phases.
 
-## Features
+## Game Features
 
-- **Real-time AI Tracking**: Uses Hailo AI for person detection, pose estimation, and instance segmentation
-- **Projection Mapping**: Precise camera-projector calibration for interactive visual effects
-- **Automated Gameplay**: Self-running game with timer-based state transitions
-- **Movement Detection**: Detects player movement during "freeze" phases using pose keypoint comparison
-- **Dynamic Visual Effects**:
-  - Green Light: Safe zones with swirling phantoms
-  - Red Light: Scanning lasers and ice encasement effects
-  - Penalty: Spotlight on caught players
-- **Audio Cues**: Spooky sound effects and background music
-- **Debug Mode**: Visual debugging with AI overlays (`--show-video`)
+- **5x10 Tile Grid**: Play area divided into 50 tiles with automatic path generation
+- **Lava Floor Theme**: Red tiles represent lava (forbidden), green tiles are safe
+- **Real-time AI Tracking**: Uses Hailo AI for pose estimation and player position tracking
+- **Movement Detection**: Detects illegal movement during "Red Light" freeze phases
+- **Projection Mapping**: Precise camera-projector calibration with saved camera settings
+- **Automatic Gameplay**: Self-running game with timer-based state transitions
+- **Win Condition**: Reach the goal row at the bottom of the screen
 
 ## Hardware Requirements
 
 1. **Compute Device**: PC or SBC capable of running Hailo AI (e.g., Raspberry Pi 5 with Hailo-8L)
 2. **AI Accelerator**: Hailo-8 or Hailo-8L
-3. **Camera**: Overhead RGB camera (e.g., USB webcam, minimum 720p recommended)
-4. **Projector**: Bright projector with low input lag, mounted overhead
-5. **Speakers**: For audio playback
+3. **Camera**: Overhead RGB camera (USB webcam, 720p minimum)
+4. **Projector**: Bright projector, mounted overhead facing down
+5. **v4l2-ctl** (optional): For camera settings management
 
 ## Software Requirements
 
 - Python 3.7+
-- Hailo Apps Infrastructure (this repository)
+- Hailo Apps Infrastructure
 - GStreamer with Hailo plugins
-- OpenCV
-- Pygame
+- OpenCV (cv2)
 - PyYAML
 - NumPy
 
 ## Quick Start
 
-### 1. Setup
+### 1. Installation
 ```bash
 cd freezing_phantoms
 ./setup.sh
 ```
 
-### 2. Run Calibration
+### 2. Run Calibration (First Time Only)
 ```bash
-python calibrate.py --video-source /dev/video0
+python main.py --run-calibration --input /dev/video0
 ```
+
+**During calibration:**
+- The checkerboard pattern displays on the projector
+- Adjust camera settings using keyboard controls (1-6 keys)
+- Press SPACE when pattern is clearly visible
+- Camera settings are automatically saved
 
 ### 3. Start the Game
 ```bash
-python main.py --video-source /dev/video0
-```
-
-## Installation
-
-1. **Install the main Hailo Apps infrastructure** (if not already done):
-   ```bash
-   cd /path/to/hailo-apps-infra
-   ./install.sh
-   ```
-
-2. **Install Freezing Phantoms dependencies**:
-   ```bash
-   cd freezing_phantoms
-   pip install -r requirements.txt
-   ```
-
-3. **Prepare audio assets** (optional but recommended):
-   - Place audio files in `assets/audio/`:
-     - `green_light_music.mp3`: Background music for move phase
-     - `freeze_sound.wav`: "Freeze!" command sound
-     - `caught_buzzer.wav`: Penalty sound effect
-     - `game_start.wav`: Countdown sound
-
-## Setup and Calibration
-
-### 1. Camera and Projector Setup
-
-1. Mount the camera overhead, looking down at the play area
-2. Mount the projector overhead, covering the same play area
-3. Ensure the camera can see the entire projected area
-4. Connect both devices to your compute system
-
-### 2. Run Calibration
-
-**Recommended: Use the standalone calibration tool**
-
-```bash
-python calibrate.py --video-source /dev/video0
-```
-
-The standalone tool provides:
-- Better point detection validation
-- Automatic retry on failure
-- Detailed quality metrics
-- Independent from game
-
-Alternatively, calibrate through the game:
-```bash
-python main.py --run-calibration --video-source /dev/video0
-```
-
-**Calibration Steps:**
-1. A calibration pattern (grid of circles) will be displayed on the projector
-2. Ensure the pattern is fully visible in the camera view
-3. Press **SPACE** to capture the camera image
-4. The system will detect the circles and calculate the homography matrix
-5. A visualization shows detected points for verification
-6. The calibration matrix is saved to `config/calibration.npy`
-
-**Tips:**
-- Ensure good lighting for circle detection
-- The pattern should fill most of the play area
-- If detection fails, adjust camera position or lighting and try again
-
-### 3. Validate Calibration (Optional but Recommended)
-
-Test the calibration accuracy:
-
-```bash
-python calibrate.py --validate --video-source /dev/video0
-```
-
-Move your hand in the camera view - a green circle should appear on the projector at the same location. Press ESC to exit validation.
-
-The validation shows:
-- Real-time tracking accuracy
-- Alignment across play area
-- Any offset or distortion issues
-
-## Running the Game
-
-Once calibration is complete, start the game:
-
-```bash
-python main.py --video-source /dev/video0
-```
-
-### Command Line Options
-
-**Game-Specific Options:**
-- `--config`: Path to configuration file (default: `config/game_config.yaml`)
-- `--calibration`: Path to calibration matrix (default: `config/calibration.npy`)
-- `--run-calibration`: Run calibration tool before starting game
-- `--validate-calibration`: Validate existing calibration
-- `--show-video`: Show video output with AI overlays (debug mode)
-- `--video-source`: Video source path (alias for `--input`)
-
-**Standard Hailo Options** (inherited from `hailo-apps-infra`):
-- `--input`, `-i`: Input source (camera device or file path)
-- `--arch`: Hailo architecture (`hailo8`, `hailo8l`, `hailo10h`)
-- `--hef-path`: Custom path to HEF model file
-- `--frame-rate`, `-r`: Frame rate of video source (default: 30)
-- `--disable-sync`: Disable display sink synchronization
-- `--show-fps`, `-f`: Show FPS measurements
-- `--dump-dot`: Dump pipeline graph to DOT file
-- `--disable-callback`: Disable user callback function
-- `--use-frame`, `-u`: Use frame from callback
-
-**Examples:**
-```bash
-# Basic usage
 python main.py --input /dev/video0
-
-# Specify architecture
-python main.py --input /dev/video0 --arch hailo8l
-
-# Custom frame rate
-python main.py --input /dev/video2 --frame-rate 60
-
-# Debug mode with pipeline graph
-python main.py --input /dev/video0 --show-video --dump-dot
 ```
 
-### Debug Mode
-
-To see what the AI pipeline is detecting, use the `--show-video` flag:
-```bash
-python main.py --video-source /dev/video0 --show-video
-```
-
-This will open a window showing:
-- Camera feed
-- Detection boxes around people
-- Pose keypoints (skeleton overlay)
-- Segmentation masks
-
-**Note:** FPS counter is not available in this debug mode, but all AI detections will be visible.
-
-Debug mode is useful for:
-- Verifying the AI pipeline is working
-- Checking camera positioning
-- Troubleshooting detection issues
-- Adjusting lighting conditions
-
-**Controls During Game:**
-- **ESC**: Quit game
-- **R**: Reset game to countdown state
+The saved camera settings are automatically applied when starting the game.
 
 ## Game Rules
 
 ### Objective
-Be the first player to cross the finish line!
+Navigate from the starting row (top of screen) to the goal row (bottom of screen) by stepping only on GREEN tiles.
 
 ### Gameplay
 
-1. **Countdown** (3 seconds): Players prepare
+1. **Countdown** (3 seconds): 
+   - Players prepare at starting position
+   - Game displays countdown text
 
 2. **Green Light** (5-8 seconds random):
-   - Players can move freely
-   - Safe zones project around each player
-   - Swirling phantom effects create ambiance
+   - Players can move on GREEN tiles
+   - RED tiles represent lava - stepping on them causes penalty
+   - New green path tiles are revealed each cycle
 
 3. **Red Light** (3-5 seconds):
-   - Players must **freeze immediately**
-   - AI captures initial pose at freeze moment
-   - Movement detection monitors for any motion
-   - Ice effects project on frozen players
-   - Scanning laser sweeps the area
+   - Players must **FREEZE immediately**
+   - Any movement detected results in penalty
+   - Movement detector monitors pose keypoints
 
 4. **Penalty** (2 seconds):
-   - If movement detected during Red Light
-   - Red spotlight highlights caught player
-   - Caught player must return to start
-   - Game returns to Green Light
+   - Triggered by movement during Red Light OR stepping on red lava tile
+   - Player moves back 2 rows toward start
+   - Displays violation message ("MOVED!" or "STEPPED ON LAVA!")
 
-5. **Game Over**:
-   - A player reaches the finish line
+5. **Win**:
+   - Player reaches the goal row
+   - Victory message displays
    - Press R to restart
+
+### Controls
+- **R** - Restart game
+- **ESC** - Quit
+
+## Installation & Setup
+
+### 1. Install Dependencies
+
+```bash
+cd freezing_phantoms
+pip install -r requirements.txt
+```
+
+### 2. Camera and Projector Setup
+
+1. Mount camera overhead, looking down at play area
+2. Mount projector overhead, covering same area
+3. Ensure camera can see entire projected area
+4. Connect both devices to your system
+
+### 3. Calibration
+
+Run the calibration tool:
+
+```bash
+python main.py --run-calibration --input /dev/video0
+```
+
+**Calibration Process:**
+
+1. **Checkerboard Pattern**: Displayed on projector
+2. **Camera Settings Adjustment** (if pattern not visible):
+   - **1/2** - Decrease/Increase brightness
+   - **3/4** - Decrease/Increase exposure
+   - **5/6** - Decrease/Increase focus
+   - **A** - Toggle auto-exposure
+   - **R** - Reset to defaults
+3. **Capture**: Press SPACE when pattern is clearly visible
+4. **Validation**: Interactive validation to test accuracy
+5. **Save**: Calibration matrix and camera settings saved automatically
+
+**Files Created:**
+- `config/calibration.npy` - Homography transformation matrix
+- `config/calibration_camera_settings.json` - Your camera settings
+
+### 4. Validate Calibration (Optional)
+
+```bash
+python main.py --validate-calibration --input /dev/video0
+```
+
+Move in the camera view - a green circle should follow your position on the projector.
 
 ## Configuration
 
-Edit `config/game_config.yaml` to customize game parameters:
+Edit `config/game_config.yaml` to customize:
 
 ```yaml
+# Game timing
 game:
-  countdown_duration: 3.0              # Countdown time
-  green_light_duration: [5.0, 8.0]     # Move phase duration range
-  red_light_duration: [3.0, 5.0]       # Freeze phase duration range
-  penalty_duration: 2.0                 # Penalty display time
+  countdown_duration: 3.0
+  green_light_duration: [5.0, 8.0]
+  red_light_duration: [3.0, 5.0]
+  penalty_duration: 2.0
 
+# Tile grid configuration
+tile_grid:
+  columns: 5
+  rows: 10
+  starting_row: 0          # Top of screen (far from camera)
+  goal_row: 9              # Bottom of screen (near camera)
+  penalty_rows_back: 2     # How many rows to move back on penalty
+  path_width: 1            # Safe tiles per row
+  obstacle_density: 0.3    # Percentage of non-path tiles that are red
+
+# Movement detection
 movement:
-  threshold_pixels: 20.0                # Movement detection threshold
-  monitored_keypoints:                  # Body parts to monitor
+  threshold_pixels: 20.0
+  monitored_keypoints:
     - left_wrist
     - right_wrist
     - left_ankle
     - right_ankle
 
+# Camera and projector
 camera:
-  resolution: [1280, 720]               # Camera resolution
-  fps: 30                                # Frame rate
+  resolution: [1280, 720]
+  fps: 30
 
 projector:
-  resolution: [1920, 1080]              # Projector resolution
-  display_index: 1                       # Display number (0=primary, 1=secondary)
+  resolution: [1920, 1080]
+  display_index: 1         # 0=primary, 1=secondary
+```
+
+## Command Line Options
+
+### Game Options
+- `--input`, `-i`: Input source (camera device or file)
+- `--config`: Path to configuration file (default: `config/game_config.yaml`)
+- `--calibration`: Path to calibration matrix (default: `config/calibration.npy`)
+- `--run-calibration`: Run calibration before starting game
+- `--validate-calibration`: Validate existing calibration
+- `--show-video`: Show video output with AI overlays (debug mode)
+
+### Hailo Options
+- `--arch`: Hailo architecture (`hailo8`, `hailo8l`, `hailo10h`)
+- `--hef-path`: Custom HEF model file path
+- `--frame-rate`, `-r`: Frame rate (default: 30)
+- `--show-fps`, `-f`: Show FPS measurements
+
+### Examples
+
+```bash
+# Basic game
+python main.py --input /dev/video0
+
+# With debug visualization
+python main.py --input /dev/video0 --show-video
+
+# Specify architecture
+python main.py --input /dev/video0 --arch hailo8l
+
+# Run calibration first
+python main.py --run-calibration --input /dev/video0
 ```
 
 ## Architecture
 
 ### AI Pipeline
 
-The game uses a combined Hailo pipeline that runs two models:
-
-1. **Pose Estimation**: Detects people and extracts 17 COCO keypoints per person
-2. **Instance Segmentation**: Provides pixel-accurate masks for each person
-
-Both models process the same video stream with shared tracking IDs.
-
-### Data Flow
-
 ```
-Camera → Hailo Pipeline → Game State Machine → Projection Renderer → Projector
-                              ↓
-                        Movement Detector
-                              ↓
-                        Audio Manager → Speakers
+Camera → GStreamer → Hailo Pose Estimation → Data Extraction
+                                                    ↓
+                                            Player Tracking
+                                                    ↓
+                                            Game State Machine
+                                                    ↓
+                                            Projection Renderer → Projector
 ```
 
 ### Key Components
 
-- **`combined_pipeline.py`**: Manages dual-model Hailo inference
-- **`data_extractor.py`**: Parses Hailo buffer into structured player data
-- **`game_state.py`**: Automated state machine with timer-based transitions
-- **`movement_detector.py`**: Compares pose keypoints to detect motion
-- **`projection_renderer.py`**: Renders effects using homography transformation
-- **`audio_manager.py`**: Handles sound playback via pygame
-- **`calibration_tool.py`**: Camera-projector calibration utility
+- **`main.py`**: Application entry point and game loop
+- **`core/tile_grid.py`**: 5x10 grid management, path generation, player position
+- **`core/game_state.py`**: State machine (COUNTDOWN, GREEN_LIGHT, RED_LIGHT, PENALTY, WIN)
+- **`core/movement_detector.py`**: Detects player movement during RED_LIGHT
+- **`core/projection_renderer.py`**: Renders game graphics with homography transform
+- **`core/camera_utils.py`**: Camera settings management (save/load/apply)
+- **`pipeline/combined_pipeline.py`**: Hailo AI pose estimation pipeline
+- **`pipeline/data_extractor.py`**: Extracts player data from Hailo buffer
+- **`calibration/calibration_tool.py`**: Camera-projector calibration with interactive controls
+- **`effects/board_effects.py`**: Visual effects (lava texture, player indicator, glows)
+
+### Coordinate System
+
+1. **Camera Space**: Raw pixel coordinates from camera (1280x720)
+2. **Normalized Space**: Pose keypoints relative to detection box (0.0-1.0)
+3. **Camera Absolute**: Keypoints converted to camera pixel coordinates
+4. **Projector Space**: Transformed via homography matrix (1920x1080)
+5. **Tile Space**: Mapped to grid row/column (0-9 rows, 0-4 cols)
+
+### Player Position Tracking
+
+Player position is determined by leg location:
+1. Extract ankle keypoints from pose estimation
+2. Average left and right ankle positions
+3. Take midpoint between ankles and detection box bottom (for ground contact)
+4. Transform to projector coordinates via homography
+5. Map to tile grid row/column
+6. Check tile state for violations
 
 ## Troubleshooting
 
 ### Calibration Issues
 
-**Problem**: Circle detection fails
-- **Solution**: Improve lighting, ensure pattern is fully visible, try adjusting camera exposure
+**Pattern not visible:**
+- Adjust camera settings using keyboard controls (1-6 keys)
+- Improve lighting conditions
+- Check projector brightness and focus
 
-**Problem**: Calibration seems inaccurate
-- **Solution**: Re-run calibration with better alignment, ensure camera and projector are stable
+**Detection fails:**
+- Ensure checkerboard pattern is fully in camera view
+- Reduce glare and reflections
+- Try different camera exposure settings
 
-**Problem**: Keyboard input not working during calibration
-- **Solution**: Click on the camera feed window before pressing keys, try 'c' instead of SPACE, check terminal for "Key detected" messages
+**Poor accuracy:**
+- Re-run calibration with better conditions
+- Ensure camera and projector are stable and not moving
+- Use validation mode to verify accuracy
 
-### Pipeline Issues
+### Camera Issues
 
-**Problem**: "Could not detect Hailo architecture"
-- **Solution**: Ensure Hailo device is connected and drivers are installed
+**Auto-focus/auto-brightness problems:**
+- Camera settings are automatically saved during calibration
+- Manually apply settings: `./setup_camera.sh /dev/video0`
+- See `CAMERA_SETUP.md` for details
 
-**Problem**: Low frame rate
-- **Solution**: Reduce camera resolution in config, ensure adequate cooling for Hailo device
+**Settings don't persist:**
+- Ensure `v4l2-ctl` is installed: `sudo apt-get install v4l-utils`
+- Camera settings reset when unplugged - re-run calibration
 
-### Projection Issues
+### Game Issues
 
-**Problem**: Effects not aligning with players
-- **Solution**: Re-run calibration, ensure camera and projector haven't moved
+**Player position inaccurate:**
+- Check calibration accuracy with validation mode
+- Ensure good lighting for pose detection
+- Verify camera can see player's full body
 
-**Problem**: Projector on wrong display
-- **Solution**: Adjust `display_index` in config, or manually move the window
+**Movement detection too sensitive/insensitive:**
+- Adjust `threshold_pixels` in config (increase = less sensitive)
+- Modify `monitored_keypoints` list
 
-### Debug Logging
-
-Enable debug logging to see detailed information from all components:
-
-```bash
-# Method 1: Command line
-python main.py --input /dev/video0 --log-level DEBUG
-
-# Method 2: Environment variable
-LOG_LEVEL=DEBUG python main.py --input /dev/video0
-```
-
-Debug logging shows:
-- Movement detector operations
-- Game state transitions
-- Pipeline initialization
-- Data extraction details
-- Projection rendering
-
-## Development and Testing
-
-### Running Unit Tests
-
-```bash
-cd tests
-pytest test_calibration.py
-pytest test_movement_detection.py
-pytest test_game_state.py
-```
-
-### Adding Custom Effects
-
-1. Edit `effects/green_light_effects.py` or `effects/red_light_effects.py`
-2. Add new rendering methods
-3. Call from projection renderer
-
-### Adjusting Movement Sensitivity
-
-Edit `config/game_config.yaml`:
-- Increase `threshold_pixels` to make detection less sensitive
-- Add/remove keypoints from `monitored_keypoints`
+**Low frame rate:**
+- Reduce camera resolution in config
+- Ensure adequate cooling for Hailo device
+- Close other applications
 
 ## Project Structure
 
 ```
 freezing_phantoms/
-├── main.py                    # Main application entry point
-├── calibrate.py              # Standalone calibration tool
-├── setup.sh                  # Setup script
-├── requirements.txt          # Python dependencies
+├── main.py                          # Main application entry point
 ├── config/
-│   ├── game_config.yaml      # Game configuration
-│   └── calibration.npy       # Calibration matrix (generated)
-├── core/                     # Core game logic
-│   ├── audio_manager.py      # Audio playback
-│   ├── game_state.py         # Game state machine
-│   ├── movement_detector.py  # Movement detection
-│   └── projection_renderer.py # Visual effects rendering
-├── pipeline/                 # AI inference
-│   ├── combined_pipeline.py  # Dual-model pipeline
-│   └── data_extractor.py     # Data parsing
-├── calibration/              # Calibration system
-│   ├── calibration_tool.py   # Calibration logic
-│   └── pattern_generator.py  # Pattern generation
-├── effects/                  # Visual effects
-│   ├── green_light_effects.py
-│   └── red_light_effects.py
-├── assets/                   # Game assets
-│   └── audio/               # Audio files
-└── tests/                   # Unit tests
-    ├── test_calibration.py
-    ├── test_movement_detection.py
-    └── test_game_state.py
+│   ├── game_config.yaml             # Game configuration
+│   ├── calibration.npy              # Calibration matrix (generated)
+│   └── calibration_camera_settings.json  # Camera settings (generated)
+├── core/                            # Core game logic
+│   ├── tile_grid.py                 # Tile grid system and path generation
+│   ├── game_state.py                # Game state machine
+│   ├── movement_detector.py         # Movement detection
+│   ├── projection_renderer.py       # Visual rendering
+│   ├── camera_utils.py              # Camera settings management
+│   └── ...                          # Other utilities
+├── pipeline/                        # AI inference
+│   ├── combined_pipeline.py         # Hailo pose estimation pipeline
+│   └── data_extractor.py            # Player data extraction
+├── calibration/                     # Calibration system
+│   ├── calibration_tool.py          # Interactive calibration
+│   └── pattern_generator.py         # Pattern generation
+├── effects/                         # Visual effects
+│   ├── board_effects.py             # Lava, tiles, player indicator
+│   ├── green_light_effects.py       # Green light effects
+│   └── red_light_effects.py         # Red light effects
+├── tests/                           # Unit tests
+├── setup_camera.sh                  # Camera setup script
+├── setup.sh                         # Installation script
+└── README.md                        # This file
 ```
 
-## Performance Characteristics
+## Technical Details
 
-### Latency
-- AI inference: ~33ms (30 FPS)
-- Movement detection: <1ms
-- Rendering: ~16ms (60 FPS capable)
-- Total loop time: ~50ms
+### Leg Position Calculation
 
-### Resource Usage
-- Memory: ~500MB (with Hailo pipeline)
-- CPU: Moderate (mostly GStreamer)
-- GPU/Hailo: High during inference
+The system calculates player "foot position" for tile detection:
 
-## Future Enhancements
+1. Extract left and right ankle keypoints from pose estimation
+2. Calculate average ankle position: `(left_ankle + right_ankle) / 2`
+3. Get detection box bottom: `bbox.ymin + bbox.height`
+4. Take midpoint: `leg_y = (ankle_y + bbox_bottom) / 2`
+5. This approximates where the feet touch the ground
 
-See [docs/TODO_LEADERBOARD.md](docs/TODO_LEADERBOARD.md) for planned leaderboard system with:
-- Web-based leaderboard display
-- Player image capture and storage
-- Score tracking and statistics
-- Local web server for viewing results
+### Tile Path Generation
+
+The tile grid uses automatic path generation:
+
+1. Start at `starting_row` (default: row 0, top of screen)
+2. Generate winding path to `goal_row` (default: row 9, bottom)
+3. Path width is configurable (default: 1 tile wide)
+4. Non-path tiles have chance to be RED based on `obstacle_density`
+5. Path tiles are revealed progressively during gameplay
+
+### Camera Settings Management
+
+Camera settings are saved during calibration and automatically applied:
+
+1. **During Calibration**: Manual adjustment with keyboard (keys 1-6)
+2. **Saved**: Settings written to JSON file alongside calibration matrix
+3. **Game Startup**: Settings automatically loaded and applied via `v4l2-ctl`
+4. **Benefits**: Consistent camera behavior, no manual setup needed
+
+## Development
+
+### Running Tests
+
+```bash
+pytest tests/
+```
+
+### Debug Mode
+
+```bash
+# Show video with AI overlays
+python main.py --input /dev/video0 --show-video
+
+# Enable debug logging
+LOG_LEVEL=DEBUG python main.py --input /dev/video0
+```
+
+### Adding Features
+
+See `CONTRIBUTING.md` for development guidelines.
+
+## Documentation
+
+- **README.md** - This file, main documentation
+- **CAMERA_SETUP.md** - Camera configuration guide
+- **CALIBRATION_CHECKERBOARD.md** - Calibration details
+- **CONTRIBUTING.md** - Development guidelines (if exists)
+- **docs/** - Additional documentation
+
+## Performance
+
+- **AI Inference**: ~33ms per frame (30 FPS)
+- **Movement Detection**: <1ms
+- **Rendering**: ~16ms (60 FPS capable)
+- **Total Loop Time**: ~50ms
+- **Memory Usage**: ~500MB with Hailo pipeline
 
 ## Credits
 
@@ -422,12 +414,8 @@ Built using:
 - [Hailo AI](https://hailo.ai/) - Edge AI acceleration
 - [GStreamer](https://gstreamer.freedesktop.org/) - Video pipeline
 - [OpenCV](https://opencv.org/) - Computer vision
-- [Pygame](https://www.pygame.org/) - Audio playback
+- COCO pose estimation model
 
 ## License
 
 See LICENSE file in repository root.
-
-## Contact
-
-For issues or questions, please open an issue on the repository.

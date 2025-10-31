@@ -1,127 +1,55 @@
+# Freezing Phantoms - Red Light, Green Light Game Configuration
+
+# Game timing and duration settings
 game:
-  countdown_duration: 3.0
-  green_light_duration: [5.0, 8.0]  # Random range in seconds
-  red_light_duration: [3.0, 5.0]    # Random range in seconds
-  penalty_duration: 2.0
+  countdown_duration: 3.0              # Countdown time before game starts (seconds)
+  green_light_duration: [5.0, 8.0]     # Green light duration range (min, max) seconds
+  red_light_duration: [3.0, 5.0]       # Red light duration range (min, max) seconds
+  penalty_duration: 2.0                 # Penalty display duration (seconds)
 
+# Tile grid configuration (5x10 grid)
 tile_grid:
-  columns: 5
-  rows: 10
-  starting_row: 0  # Top (far from camera)
-  goal_row: 9  # Bottom (close to camera)
-  penalty_rows_back: 2  # Move back towards start (away from camera)
-  path_width: 1  # Number of safe tiles per row
-  obstacle_density: 0.3  # Percentage of non-path tiles that are red
+  columns: 5                            # Number of columns in grid
+  rows: 10                              # Number of rows in grid
+  starting_row: 0                       # Starting position (0 = top, far from camera)
+  goal_row: 9                           # Goal position (9 = bottom, close to camera)
+  penalty_rows_back: 2                  # Rows to move back on penalty
+  path_width: 1                         # Number of safe tiles per row
+  obstacle_density: 0.3                 # Percentage of non-path tiles that are red lava (0.0-1.0)
 
+# Lava floor visual settings
 lava_floor:
-  texture_path: "lava-floor-2.jpg"
-  tile_border_thickness: 2
-  tile_border_color: [50, 50, 50]  # Dark gray
+  texture_path: "lava-floor-2.jpg"      # Path to lava texture image
+  tile_border_thickness: 2              # Border thickness around tiles (pixels)
+  tile_border_color: [50, 50, 50]       # Border color (BGR format)
 
+# Movement detection settings
 movement:
-  threshold_pixels: 20.0
-  monitored_keypoints:
+  threshold_pixels: 20.0                # Movement threshold in pixels
+  monitored_keypoints:                  # Body parts monitored for movement
     - left_wrist
     - right_wrist
     - left_ankle
     - right_ankle
     - left_shoulder
     - right_shoulder
-  # Smoothing and sensitivity controls
-  smoothing_alpha: 0.3  # 0-1, higher = more responsive, lower = more stable
-  pose_history_size: 5  # Number of poses to keep in history for smoothing
-  sensitivity_multiplier: 1.0  # >0, higher = more sensitive to movement
-  # Confidence filtering
-  keypoint_confidence_threshold: 0.5  # 0-1, minimum confidence score for keypoints to use
+  smoothing_alpha: 0.3                  # Smoothing factor (0-1, higher = more responsive)
+  pose_history_size: 5                  # Number of poses to keep for smoothing
+  sensitivity_multiplier: 1.0           # Movement sensitivity (higher = more sensitive)
+  keypoint_confidence_threshold: 0.5    # Minimum confidence score for keypoints (0-1)
 
+# Camera configuration
 camera:
-  resolution: [1280, 720]  # 720p resolution (matches pipeline and calibration)
-  fps: 30
+  resolution: [1280, 720]               # Camera resolution (720p, matches calibration)
+  fps: 30                                # Frame rate
 
+# Projector configuration
 projector:
-  resolution: [1280, 720]  # 720p resolution (matches camera and calibration)
-  display_index: 1  # Secondary display (0 = primary, 1 = secondary)
+  resolution: [1280, 720]               # Projector resolution (should match camera)
+  display_index: 1                       # Display index (0=primary, 1=secondary)
 
+# Calibration pattern settings
 calibration:
-  pattern_rows: 6  # Interior corners (not squares!)
-  pattern_cols: 9  # Interior corners (not squares!)
-  square_size: 80  # Size of each square in pixels (smaller for better detection)
-
-board:
-  width: 1280
-  height: 720
-  obstacles:
-    - id: "obstacle_1"
-      type: "rectangle"
-      position: [267, 200]  # Scaled from 1920x1080 to 1280x720
-      size: [133, 100]
-      color: [255, 0, 0]
-    - id: "obstacle_2"
-      type: "circle"
-      position: [533, 400]  # Scaled from 1920x1080 to 1280x720
-      size: [67, 0]
-      color: [255, 0, 0]
-    - id: "obstacle_3"
-      type: "rectangle"
-      position: [800, 267]  # Scaled from 1920x1080 to 1280x720
-      size: [100, 133]
-      color: [255, 0, 0]
-  boundaries:
-    - id: "wall_top"
-      type: "wall"
-      start: [0, 0]
-      end: [1280, 0]
-      color: [255, 255, 0]
-      thickness: 5
-    - id: "wall_bottom"
-      type: "wall"
-      start: [0, 720]
-      end: [1280, 720]
-      color: [255, 255, 0]
-      thickness: 5
-    - id: "wall_left"
-      type: "wall"
-      start: [0, 0]
-      end: [0, 720]
-      color: [255, 255, 0]
-      thickness: 5
-    - id: "wall_right"
-      type: "wall"
-      start: [1280, 0]
-      end: [1280, 720]
-      color: [255, 255, 0]
-      thickness: 5
-    - id: "finish_line"
-      type: "finish_line"
-      start: [1200, 67]  # Scaled from 1920x1080 to 1280x720
-      end: [1200, 653]
-      color: [0, 255, 0]
-      thickness: 8
-  ghosts:
-    - id: "ghost_1"
-      type: "patrol"
-      start_pos: [67, 67]  # Scaled from 1920x1080 to 1280x720
-      patrol_points: [[67, 67], [333, 67], [333, 333], [67, 333]]
-      speed: 50.0
-      color: [0, 0, 255]
-      size: 30.0
-    - id: "ghost_2"
-      type: "chase"
-      start_pos: [533, 267]  # Scaled from 1920x1080 to 1280x720
-      detection_range: 200.0
-      speed: 60.0
-      color: [255, 0, 255]
-      size: 35.0
-    - id: "ghost_3"
-      type: "guard"
-      start_pos: [933, 200]  # Scaled from 1920x1080 to 1280x720
-      detection_range: 150.0
-      speed: 40.0
-      color: [255, 100, 0]
-      size: 25.0
-  debug:
-    show_leg_positions: true
-    show_obstacles: true
-    show_ghosts: true
-    show_collision_zones: false
-
+  pattern_rows: 6                        # Number of interior corners vertically
+  pattern_cols: 9                        # Number of interior corners horizontally
+  square_size: 80                        # Size of each checkerboard square (pixels)

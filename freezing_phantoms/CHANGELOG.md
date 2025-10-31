@@ -1,90 +1,97 @@
 # Changelog
 
-All notable changes to Freezing Phantoms will be documented in this file.
+All notable changes to the Freezing Phantoms project are documented here.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [1.1.0] - 2025-10-31
+## [Unreleased] - Current Development
 
 ### Added
+- **Red Light, Green Light - Floor is Lava Game**: Complete transformation to tile-based game
+  - 5x10 tile grid system with automatic path generation
+  - Lava floor theme (RED tiles = lava, GREEN tiles = safe)
+  - Player tracking via leg position (ankle + bbox bottom averaging)
+  - Win condition when reaching goal row
+  - Penalty system (move back 2 rows on violation)
+  - Tile violation detection (stepping on red lava tiles)
 
-#### Code Quality & Development Tools
-- **Pre-commit hooks** (.pre-commit-config.yaml) for automated code quality checks
-- **CI/CD pipeline** (.github/workflows/ci.yml) for automated testing and linting
-- **Makefile** with common development tasks (test, lint, format, etc.)
-- **pyproject.toml** for tool configuration (black, isort, mypy, bandit, pytest)
-- **Development requirements** (requirements-dev.txt) with testing and linting tools
-- **Contributing guidelines** (CONTRIBUTING.md) with detailed development workflow
-- **Gitignore file** for proper version control
+- **Camera Settings Management**:
+  - Automatic camera setup during calibration using `v4l2-ctl`
+  - Interactive manual controls during calibration (keys 1-6)
+  - Camera settings saved alongside calibration matrix (JSON format)
+  - Automatic settings application when starting game
+  - Manual setup script (`setup_camera.sh`)
 
-#### Core Improvements
-- **Constants module** (`core/constants.py`) - Centralized configuration constants
-  - Eliminated hardcoded values throughout codebase
-  - Type-safe constants using `Final` type hints
-  - Organized by category (defaults, colors, exit codes, etc.)
+- **Enhanced Calibration Tool**:
+  - Interactive camera controls during calibration
+  - Real-time setting adjustments (brightness, exposure, focus)
+  - Auto-exposure toggle
+  - Reset to defaults option
+  - Settings displayed on screen during calibration
+  - Better keyboard mapping (number keys 1-6 for increment/decrement)
 
-- **Configuration validation** (`core/config_validator.py`)
-  - Comprehensive YAML config validation
-  - Schema validation with detailed error messages
-  - File size and format checks
-  - Default config generation utility
+- **Improved Player Position Tracking**:
+  - More accurate leg position using average of ankles and bbox bottom
+  - Smaller player marker (12px radius) for better accuracy
+  - Better ground contact approximation
 
-- **Performance monitoring** (`core/performance_monitor.py`)
-  - Real-time FPS tracking
-  - Component-level timing (pipeline, render, movement detection)
-  - Frame drop detection and reporting
-  - Performance metrics export
-
-- **Enhanced error handling** (`core/exceptions.py`)
-  - Custom exception hierarchy
-  - Specific error types (CalibrationError, PipelineError, etc.)
-  - Better error messages with context
-
-- **CLI utilities** (`core/cli.py`)
-  - Improved argument parsing
-  - Better help messages and examples
-  - Startup banners and user feedback
+- **Core Components**:
+  - `core/tile_grid.py`: Complete tile grid system
+  - `core/camera_utils.py`: Camera settings management utilities
+  - `effects/board_effects.py`: Lava texture, tile effects, player indicators
 
 ### Changed
+- **Game Theme**: From "Halloween Freezing Phantoms" to "Red Light, Green Light - Floor is Lava"
+- **Gameplay**: From finish-line racing to tile-based navigation
+- **Player Position**: Now uses leg position (feet approximation) instead of center of mass
+- **Camera Settings**: Now managed automatically instead of manual setup
 
-#### Code Quality
-- Improved type hints throughout codebase
-- Enhanced docstrings (Google style)
-- Better code organization and modularity
-- Consistent import ordering with isort
-- Code formatting with black (100 char line length)
+### Documentation
+- Complete README rewrite reflecting current game mechanics
+- Enhanced CAMERA_SETUP.md with auto-save workflow
+- Consolidated CALIBRATION_CHECKERBOARD.md
+- Archived outdated intermediate state documentation
 
-#### Documentation
-- More detailed README sections
-- Added CONTRIBUTING.md for developers
-- Added CHANGELOG.md for version tracking
-- Improved inline code documentation
+## [Previous] - Earlier Development
 
-### Fixed
-- Linting errors in existing code
-- Import organization
-- Type hint consistency
-- Exception handling patterns
+### Pipeline Simplification
+- Removed instance segmentation, keeping only pose estimation
+- Fixed resolution to 720p (1280x720) for consistency with calibration
+- Simplified pipeline architecture
+- Leg position calculation using ankle keypoints
+- Renamed pipeline class to `PoseEstimationPipeline`
 
-### Development Experience
-- **Faster setup** with improved scripts
-- **Easier testing** with pytest configuration
-- **Better debugging** with enhanced logging
-- **Automated checks** with pre-commit hooks
-- **Clear contribution guidelines** for new developers
+### Calibration Improvements
+- Checkerboard pattern instead of circle grid
+- Better point detection with validation
+- Interactive validation mode
+- Retry logic with history tracking
+- Detailed quality metrics
 
-## [1.0.0] - 2024-XX-XX
+### Core Infrastructure
+- Hailo AI integration for pose estimation
+- GStreamer pipeline for video processing
+- Homography-based projection mapping
+- Movement detection using pose keypoints
+- Real-time rendering with OpenCV
 
-### Initial Release
-- AI-powered pose estimation and instance segmentation
-- Projection mapping with camera-projector calibration
-- Automated game state machine
-- Movement detection with smoothing
-- Dynamic visual effects (green light, red light, penalty)
-- Audio system with pygame
-- Board system with obstacles and ghosts
-- Debug mode with video display
-- Comprehensive configuration system
-- Unit tests for core components
+### Game State Machine
+- COUNTDOWN state for game start
+- GREEN_LIGHT state for player movement
+- RED_LIGHT state with freeze detection
+- PENALTY state for violations
+- WIN state for game completion
+- Automatic state transitions with timers
 
+### Visual Effects
+- Projection rendering with homography transform
+- Green light effects (safe zones, movement allowed)
+- Red light effects (freeze, scanning lasers)
+- Penalty effects (spotlight on violator)
+- Win effects (victory message)
+
+## Version History Notes
+
+This project has evolved significantly from its initial "Freezing Phantoms Halloween Game" concept to the current "Red Light, Green Light - Floor is Lava" tile-based game. Many intermediate improvements and refactorings are archived in `docs/archive/` for historical reference.
+
+## Contributing
+
+See CONTRIBUTING.md for development guidelines and how to contribute to the project.

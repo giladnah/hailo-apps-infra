@@ -1,28 +1,57 @@
 # Camera Setup Guide
 
-## Problem: Camera Auto-Focus and Auto-Brightness
+## Overview
 
-If your camera keeps adjusting focus, brightness, or exposure during gameplay, it can cause detection issues and visual instability.
+The game automatically manages camera settings to ensure consistent image quality for pose detection and calibration accuracy. Camera settings are configured during calibration and automatically applied during gameplay.
 
-## Automatic Setup During Calibration
+## Automatic Setup (Recommended)
 
-**Good news!** Camera settings are now automatically applied during the calibration process. When you run calibration, the tool will:
+**Camera settings are fully automated:**
 
-1. Check for `v4l2-ctl` availability
-2. Automatically disable auto-focus, auto-exposure, and auto-brightness
-3. Set fixed values for optimal detection
+1. **During Calibration**:
+   - Auto-focus, auto-exposure, and auto-brightness are disabled
+   - Interactive keyboard controls let you adjust settings in real-time
+   - Settings are **saved automatically** when calibration succeeds
+   - Saved as `config/calibration_camera_settings.json`
 
-No manual setup needed before calibration!
+2. **During Gameplay**:
+   - Saved camera settings are loaded automatically
+   - Applied before starting the AI pipeline
+   - Ensures consistent camera behavior every session
 
-## Manual Setup (Optional)
+**No manual setup required!** Just run calibration, adjust if needed, and the game uses those settings automatically.
 
-If you want to apply settings before starting the game (or re-apply after reconnecting the camera), run:
+## Camera Settings During Calibration
+
+The calibration tool provides **interactive manual controls** while viewing the camera feed:
+
+- **1 / 2** - Decrease / Increase brightness
+- **3 / 4** - Decrease / Increase exposure
+- **5 / 6** - Decrease / Increase focus
+- **A** - Toggle auto-exposure on/off
+- **R** - Reset to default values
+
+Adjust these settings until the checkerboard pattern is clearly visible, then capture. Your settings will be saved automatically!
+
+## Saved Settings File
+
+After calibration, you'll have:
+- `config/calibration.npy` - The homography matrix
+- `config/calibration_camera_settings.json` - Your camera settings (brightness, exposure, focus, etc.)
+
+The game automatically loads both files when starting.
+
+## Manual Setup Script (Optional)
+
+If you need to apply settings outside of calibration, you can use:
 
 ```bash
 ./setup_camera.sh /dev/video0
 ```
 
 Replace `/dev/video0` with your camera device (check with `ls /dev/video*`).
+
+Note: This applies **default** settings, not your calibrated settings.
 
 ## What This Does
 

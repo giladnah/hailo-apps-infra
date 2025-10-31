@@ -17,6 +17,7 @@ import yaml
 
 from hailo_apps.hailo_app_python.core.common.hailo_logger import get_logger
 from freezing_phantoms.calibration.calibration_tool import CalibrationTool
+from freezing_phantoms.core.camera_utils import apply_camera_settings_from_file
 from freezing_phantoms.core.game_state import GameState, GameStateMachine
 from freezing_phantoms.core.movement_detector import MovementDetector
 from freezing_phantoms.core.tile_grid import TileGrid
@@ -67,6 +68,9 @@ class FreezingPhantomsGame:
 
         self.homography_matrix = np.load(calibration_path)
         hailo_logger.info("Loaded calibration matrix from %s", calibration_path)
+        
+        # Store calibration path for camera settings
+        self.calibration_path = calibration_path
 
         # Extract config values
         self.camera_resolution = tuple(self.config["camera"]["resolution"])
@@ -135,6 +139,21 @@ class FreezingPhantomsGame:
             video_source (str): Video source path or device.
         """
         hailo_logger.info("Starting AI pipeline with source: %s", video_source)
+        
+        # Apply saved camera settings if available
+        camera_settings_path = self.calibration_path.with_suffix('.json').parent / (
+            self.calibration_path.stem + '_camera_settings.json'
+        )
+        if camera_settings_path.exists():
+            hailo_logger.info("Applying saved camera settings from calibration...")
+            print(f"📷 Applying camera settings from {camera_settings_path.name}")
+            if apply_camera_settings_from_file(video_source, camera_settings_path):
+                print("✓ Camera settings applied successfully")
+            else:
+                print("⚠ Camera settings could not be applied (continuing anyway)")
+        else:
+            hailo_logger.info("No saved camera settings found, using camera defaults")
+            print("ℹ No saved camera settings found (run calibration to save settings)")
 
         # Use frame rate from Hailo options if provided, otherwise use config
         frame_rate = getattr(self.hailo_options, 'frame_rate', None) or self.fps
