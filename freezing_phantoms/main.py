@@ -13,6 +13,7 @@ import termios
 import time
 import tty
 from pathlib import Path
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -71,7 +72,7 @@ class FreezingPhantomsGame:
 
         self.homography_matrix = np.load(calibration_path)
         hailo_logger.info("Loaded calibration matrix from %s", calibration_path)
-        
+
         # Store calibration path for camera settings
         self.calibration_path = calibration_path
 
@@ -140,7 +141,7 @@ class FreezingPhantomsGame:
     def _get_terminal_key(self) -> Optional[str]:
         """
         Get keyboard input from terminal (non-blocking).
-        
+
         Returns:
             Optional[str]: Key pressed, or None if no key.
         """
@@ -166,7 +167,7 @@ class FreezingPhantomsGame:
             video_source (str): Video source path or device.
         """
         hailo_logger.info("Starting AI pipeline with source: %s", video_source)
-        
+
         # Apply saved camera settings if available
         camera_settings_path = self.calibration_path.with_suffix('.json').parent / (
             self.calibration_path.stem + '_camera_settings.json'
@@ -205,10 +206,10 @@ class FreezingPhantomsGame:
     def run(self) -> None:
         """Run the main game loop."""
         hailo_logger.info("Starting Red Light Green Light game loop...")
-        
+
         # Setup terminal for non-blocking input
         self._setup_terminal()
-        
+
         print("\n" + "=" * 60)
         print("RED LIGHT GREEN LIGHT - Floor is Lava Edition")
         print("=" * 60)
@@ -252,7 +253,7 @@ class FreezingPhantomsGame:
                 # Check for tile violations during GREEN_LIGHT
                 if self.game_state.current_state == GameState.GREEN_LIGHT and player_data:
                     self._check_tile_violations(player_data)
-                    
+
                     # Check if player has advanced to next row
                     if self.game_state.check_player_advancement():
                         print("✓ Player advanced! Starting transition to RED LIGHT...")
@@ -285,7 +286,7 @@ class FreezingPhantomsGame:
                         hailo_logger.info("R pressed, restarting game")
                         self.game_state.reset()
                         print("\n♻️  Game restarted!\n")
-                    
+
                     # Sensitivity controls for freeze detection
                     elif key in ('+', '='):
                         # Increase sensitivity (lower threshold)
@@ -307,7 +308,7 @@ class FreezingPhantomsGame:
                         print(f"Smoothing alpha: {stats['smoothing_alpha']:.2f}")
                         print(f"Pose history size: {stats['pose_history_size']}")
                         print("=================================\n")
-                
+
                 # Still need cv2.waitKey for window event handling
                 cv2.waitKey(1)  # noqa: PGH003,E1101
 
@@ -382,6 +383,9 @@ class FreezingPhantomsGame:
     def cleanup(self) -> None:
         """Clean up all resources."""
         hailo_logger.info("Cleaning up visualization resources...")
+
+        # Restore terminal settings
+        self._restore_terminal()
 
         # Stop pipeline
         if self.pipeline:
