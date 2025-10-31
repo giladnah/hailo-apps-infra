@@ -166,7 +166,7 @@ class ProjectionRenderer:
         # Get text dimensions
         text_size, _ = cv2.getTextSize(text, font, font_scale, thickness)
         text_width, text_height = text_size
-        
+
         # Calculate x position if centered
         if centered:
             x = (canvas.shape[1] - text_width) // 2
@@ -275,9 +275,11 @@ class ProjectionRenderer:
         elif state == GameState.GAME_OVER:
             canvas = self._render_game_over(canvas)
         
-        # Render UI elements at bottom (closest to projector) LAST so they overlay everything
-        # Both hearts and score bar facing player (upside down)
-        canvas = self._render_ui_bar_bottom(canvas, state, current_hearts, current_score)
+        # Render UI elements (closest to projector) LAST so they overlay everything
+        # Top bar: Announcement text (upside down)
+        canvas = self._render_announcement_bar_top(canvas, state)
+        # Bottom bar: Hearts and score (upside down)
+        canvas = self._render_ui_bar_bottom(canvas, current_hearts, current_score)
 
         return canvas
 
@@ -705,8 +707,59 @@ class ProjectionRenderer:
 
         return canvas
 
+    def _render_announcement_bar_top(
+        self, canvas: np.ndarray, state: GameState
+    ) -> np.ndarray:
+        """
+        Render announcement bar at top (closest to projector) with game state messages,
+        facing the player (upside down).
+
+        Args:
+            canvas (np.ndarray): Canvas to render on.
+            state (GameState): Current game state.
+
+        Returns:
+            np.ndarray: Canvas with announcement bar rendered.
+        """
+        width = canvas.shape[1]
+        bar_height = 80  # Height for announcement text
+        bar_y_end = 80  # Position at top
+
+        # Semi-transparent dark bar at top
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (0, 0), (width, bar_y_end), (20, 20, 20), -1)
+        cv2.addWeighted(overlay, 0.9, canvas, 0.1, 0, canvas)
+
+        # === STATE MESSAGE (center, upside down) ===
+        if state == GameState.GREEN_LIGHT:
+            message = "GO!"
+            color = (0, 255, 0)
+        elif state == GameState.RED_LIGHT:
+            message = "FREEZE!"
+            color = (0, 0, 255)
+        elif state == GameState.TRANSITION:
+            message = "GET READY..."
+            color = (255, 255, 0)
+        elif state == GameState.PENALTY:
+            message = "PENALTY!"
+            color = (255, 0, 255)
+        elif state == GameState.COUNTDOWN:
+            message = "Stand on Green Tile"
+            color = (0, 255, 255)
+        else:
+            message = ""
+            color = (255, 255, 255)
+
+        if message:
+            # Render upside down text at top
+            canvas = self._render_upside_down_text(
+                canvas, message, None, bar_y_end - 15, color, 1.5, 3, centered=True
+            )
+
+        return canvas
+
     def _render_ui_bar_bottom(
-        self, canvas: np.ndarray, state: GameState, current_hearts: int, current_score: int
+        self, canvas: np.ndarray, current_hearts: int, current_score: int
     ) -> np.ndarray:
         """
         Render UI bar at bottom (closest to projector) with hearts and score,
@@ -714,7 +767,6 @@ class ProjectionRenderer:
 
         Args:
             canvas (np.ndarray): Canvas to render on.
-            state (GameState): Current game state.
             current_hearts (int): Number of hearts remaining.
             current_score (int): Current score.
 
@@ -723,7 +775,7 @@ class ProjectionRenderer:
         """
         height = canvas.shape[0]
         width = canvas.shape[1]
-        bar_height = 150  # Increased to fit hearts + text
+        bar_height = 100  # Reduced height (no text now)
         bar_y_start = height - bar_height
 
         # Semi-transparent dark bar at bottom
@@ -733,13 +785,13 @@ class ProjectionRenderer:
 
         font = cv2.FONT_HERSHEY_SIMPLEX
 
-        # === HEARTS (top part of UI bar, upside down) ===
-        hearts_y = bar_y_start + 35  # Near top of bar
+        # === HEARTS (left side, upside down) ===
+        hearts_y = bar_y_start + 50  # Centered in bar
         heart_spacing = 50
-        hearts_start_x = (width - (3 * heart_spacing)) // 2  # Center them
+        hearts_start_x = 50  # Left side
 
-        for i in range(3):  # Always show 3 heart slots
-            heart_x = hearts_start_x + (i * heart_spacing) + 25
+        for i in range(5):  # Show 5 heart slots
+            heart_x = hearts_start_x + (i * heart_spacing)
             if i < current_hearts:
                 # Filled heart (red) - upside down
                 cv2.circle(canvas, (heart_x - 10, hearts_y), 12, (0, 0, 255), -1)
@@ -767,38 +819,12 @@ class ProjectionRenderer:
                 )
                 cv2.polylines(canvas, [pts], False, (100, 100, 100), 2)
 
-        # === STATE MESSAGE (center, upside down) ===
-        if state == GameState.GREEN_LIGHT:
-            message = "GO!"
-            color = (0, 255, 0)
-        elif state == GameState.RED_LIGHT:
-            message = "FREEZE!"
-            color = (0, 0, 255)
-        elif state == GameState.TRANSITION:
-            message = "GET READY..."
-            color = (255, 255, 0)
-        elif state == GameState.PENALTY:
-            message = "PENALTY!"
-            color = (255, 0, 255)
-        elif state == GameState.COUNTDOWN:
-            message = "Stand on Green Tile"
-            color = (0, 255, 255)
-        else:
-            message = ""
-            color = (255, 255, 255)
-
-        if message:
-            # Render upside down text
-            canvas = self._render_upside_down_text(
-                canvas, message, None, bar_y_start + 90, color, 1.0, 2, centered=True
-            )
-
         # === SCORE (right side, upside down) ===
         score_text = f"Score: {current_score}"
-        score_size = cv2.getTextSize(score_text, font, 1.0, 2)[0]
+        score_size = cv2.getTextSize(score_text, font, 1.2, 3)[0]
         score_x = width - score_size[0] - 50
         canvas = self._render_upside_down_text(
-            canvas, score_text, score_x, bar_y_start + 90, (255, 255, 255), 1.0, 2, centered=False
+            canvas, score_text, score_x, bar_y_start + 60, (255, 255, 255), 1.2, 3, centered=False
         )
 
         return canvas

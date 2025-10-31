@@ -22,7 +22,7 @@ tile_grid:
   
 # Lives system
 lives:
-  starting_hearts: 3                    # Number of lives player starts with
+  starting_hearts: 5                    # Number of lives player starts with
   lose_heart_on_movement: true          # Lose heart when moving during red light
   lose_heart_on_lava: false             # Don't lose heart for lava (just move back)
 
