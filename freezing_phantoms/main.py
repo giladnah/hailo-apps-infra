@@ -539,8 +539,9 @@ class FreezingPhantomsGame:
 
         current_players = player_data["players"]
         
-        # New API: just pass current players, detector tracks velocity internally
-        movement_results = self.movement_detector.detect_player_movement(current_players)
+        # Enable debug logging to see all velocities during RED_LIGHT
+        debug_log = True
+        movement_results = self.movement_detector.detect_player_movement(current_players, debug_log=debug_log)
 
         for track_id, (moved, velocity, keypoint) in movement_results.items():
             if moved:

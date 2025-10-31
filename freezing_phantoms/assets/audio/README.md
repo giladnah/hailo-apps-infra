@@ -12,11 +12,12 @@ Place your audio files in this directory for the Freezing Phantoms game.
 **Mood**: Halloween-themed, playful, slightly eerie
 
 ### 2. freeze_sound.wav
-**Purpose**: "Freeze!" command sound
+**Purpose**: "Freeze!" command sound (RED LIGHT stage)
 **Description**: Sharp, attention-grabbing sound when players must freeze
 **Duration**: 1-3 seconds
 **Format**: WAV
 **Examples**: Witch cackle, ghost sound, sudden music stop with alarm
+**Current**: Submarine Sonar Sound Effect - Underwater Ping (creates eerie freeze atmosphere)
 
 ### 3. caught_buzzer.wav
 **Purpose**: Penalty/caught sound effect
@@ -71,6 +72,14 @@ After placing audio files in this directory, test them:
 cd /path/to/freezing_phantoms
 python -c "from core.audio_manager import AudioManager; from pathlib import Path; am = AudioManager(Path('assets')); am.play_game_start()"
 ```
+
+## Current Audio Files
+
+### freeze_sound.wav
+- **Source**: YouTube - Submarine Sonar Sound Effect - Underwater Ping
+- **URL**: https://www.youtube.com/watch?v=JCLg_jSs6Tg
+- **Added**: October 31, 2025
+- **Usage**: RED LIGHT stage - creates an eerie, underwater detection atmosphere
 
 ## Notes
 

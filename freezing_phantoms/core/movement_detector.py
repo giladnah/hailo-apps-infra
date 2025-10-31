@@ -277,18 +277,27 @@ class MovementDetector:
         
         return max_velocity, max_keypoint
 
-    def detect_movement(self, track_id: int) -> Tuple[bool, float, Optional[str]]:
+    def detect_movement(self, track_id: int, debug_log: bool = False) -> Tuple[bool, float, Optional[str]]:
         """
         Detect if player is currently moving.
         Requires sustained velocity over multiple consecutive frames.
 
         Args:
             track_id (int): Track ID of player.
+            debug_log (bool): If True, log all keypoint velocities to terminal.
 
         Returns:
             Tuple[bool, float, Optional[str]]: (movement_detected, velocity, keypoint_name)
         """
         velocity, keypoint = self.calculate_velocity(track_id)
+        
+        # Debug logging: dump all keypoint velocities
+        if debug_log and track_id in self.velocity_vectors:
+            velocities_str = " | ".join([
+                f"{kp}: {math.sqrt(vx**2 + vy**2):.1f}px/s"
+                for kp, (vx, vy) in self.velocity_vectors[track_id].items()
+            ])
+            print(f"[Track {track_id}] Velocities: {velocities_str} | MAX: {velocity:.1f}px/s | Threshold: {self.velocity_threshold:.1f}px/s")
         
         # Check if velocity exceeds threshold
         if velocity > self.velocity_threshold:
@@ -299,6 +308,14 @@ class MovementDetector:
             
             # Require multiple consecutive frames above threshold
             if self.consecutive_violations[track_id] >= self.min_consecutive_frames:
+                # Log with all velocities when detected
+                if track_id in self.velocity_vectors:
+                    velocities_str = " | ".join([
+                        f"{kp}: {math.sqrt(vx**2 + vy**2):.1f}px/s"
+                        for kp, (vx, vy) in self.velocity_vectors[track_id].items()
+                    ])
+                    print(f"🚨 MOVEMENT DETECTED [Track {track_id}]: {velocities_str} | MAX: {keypoint}={velocity:.1f}px/s")
+                
                 hailo_logger.debug(
                     "Movement detected for track %d: %s moving at %.1f px/s (threshold: %.1f px/s, %d consecutive frames)",
                     track_id, keypoint, velocity, self.velocity_threshold, self.consecutive_violations[track_id]
@@ -313,6 +330,7 @@ class MovementDetector:
     def detect_player_movement(
         self,
         players_current: List,
+        debug_log: bool = False,
     ) -> Dict[int, Tuple[bool, float, Optional[str]]]:
         """
         Detect movement for multiple players.
@@ -320,6 +338,7 @@ class MovementDetector:
 
         Args:
             players_current (List[PlayerData]): Current player states.
+            debug_log (bool): If True, log all keypoint velocities to terminal.
 
         Returns:
             Dict[int, Tuple[bool, float, Optional[str]]]:
@@ -341,7 +360,7 @@ class MovementDetector:
         # Detect movement for each player
         for player in players_current:
             track_id = player.track_id
-            moved, velocity, keypoint = self.detect_movement(track_id)
+            moved, velocity, keypoint = self.detect_movement(track_id, debug_log=debug_log)
             movement_results[track_id] = (moved, velocity, keypoint)
         
         return movement_results
