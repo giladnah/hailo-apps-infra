@@ -221,8 +221,12 @@ class TileGrid:
 
         # Mark starting row as revealed with path
         self._reveal_row(self.starting_row)
+        
+        # Count initial green tiles
+        green_count = len([t for t in self.tiles.values() if t.state == TileState.GREEN])
 
-        hailo_logger.info("Generated path with %d tiles", len(self.path))
+        hailo_logger.info("Generated path with %d tiles, revealed starting row %d (%d green tiles)", 
+                         len(self.path), self.starting_row, green_count)
 
     def _reveal_row(self, row: int) -> None:
         """
