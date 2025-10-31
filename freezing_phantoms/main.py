@@ -303,18 +303,18 @@ class FreezingPhantomsGame:
                         hailo_logger.info("R pressed, restarting game")
                         self.game_state.reset()
                         print("\n♻️  Game restarted!\n")
-
-                        # Sensitivity controls for freeze detection
-                        elif key in ('+', '='):
-                            # Increase sensitivity (lower threshold)
-                            new_threshold = max(10.0, self.movement_detector.threshold_pixels - 10.0)
-                            self.movement_detector.set_threshold(new_threshold)
-                            print(f"🔼 Freeze detection MORE sensitive: {new_threshold:.1f}px threshold")
-                        elif key in ('-', '_'):
-                            # Decrease sensitivity (higher threshold)
-                            new_threshold = min(100.0, self.movement_detector.threshold_pixels + 10.0)
-                            self.movement_detector.set_threshold(new_threshold)
-                            print(f"🔽 Freeze detection LESS sensitive: {new_threshold:.1f}px threshold")
+                    
+                    # Sensitivity controls for freeze detection
+                    elif key in ('+', '='):
+                        # Increase sensitivity (lower threshold)
+                        new_threshold = max(10.0, self.movement_detector.threshold_pixels - 10.0)
+                        self.movement_detector.set_threshold(new_threshold)
+                        print(f"🔼 Freeze detection MORE sensitive: {new_threshold:.1f}px threshold")
+                    elif key in ('-', '_'):
+                        # Decrease sensitivity (higher threshold)
+                        new_threshold = min(100.0, self.movement_detector.threshold_pixels + 10.0)
+                        self.movement_detector.set_threshold(new_threshold)
+                        print(f"🔽 Freeze detection LESS sensitive: {new_threshold:.1f}px threshold")
                     elif key in ('s', 'S'):
                         # Show current sensitivity settings
                         stats = self.movement_detector.get_smoothing_stats()
