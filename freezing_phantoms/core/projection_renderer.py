@@ -277,7 +277,7 @@ class ProjectionRenderer:
             canvas = self._render_win(canvas, game_stats=game_stats)
         elif state == GameState.GAME_OVER:
             canvas = self._render_game_over(canvas)
-        
+
         # Render single UI bar at BOTTOM (closest to projector/player) LAST so it overlays everything
         # SPATIAL LAYOUT: Top pixels = far from projector (start), Bottom pixels = near projector (goal)
         # Contains: hearts (left), announcement (center), score (right) - all upside down
@@ -521,7 +521,7 @@ class ProjectionRenderer:
         # Draw smoothed keypoints for debugging
         if player_data and "players" in player_data and self.movement_detector:
             canvas = self._draw_smoothed_keypoints(canvas, player_data)
-        
+
         # Render player position with frozen indicator
         if player_data and "players" in player_data:
             for player in player_data["players"]:
@@ -719,12 +719,12 @@ class ProjectionRenderer:
         """
         Render single UI bar at BOTTOM (closest to projector/player) with all game information,
         all facing the player (upside down).
-        
+
         SPATIAL LAYOUT:
         - Top of image (row 0) = FAR from projector = Player starts here
         - Bottom of image (row 5) = NEAR projector = Goal, where UI bar is
         - Player stands beyond bottom edge, looking down at floor projection
-        
+
         Layout: Hearts (left) | Announcement (center) | Score (right)
 
         Args:
@@ -832,33 +832,33 @@ class ProjectionRenderer:
         """
         if not self.movement_detector or not player_data or "players" not in player_data:
             return canvas
-        
+
         for player in player_data["players"]:
             track_id = player.track_id
-            
+
             # Get smoothed pose from movement detector
             smoothed_pose = self.movement_detector.get_smoothed_pose(track_id)
             if not smoothed_pose:
                 continue
-            
+
             # Draw each smoothed keypoint
             for keypoint_name, (x, y) in smoothed_pose.items():
                 # Transform to projector coordinates
                 proj_point = cv2.perspectiveTransform(
                     np.array([[[x, y]]], dtype=np.float32),
-                    self.homography_matrix
+                    self.H
                 )[0][0]
                 proj_x, proj_y = int(proj_point[0]), int(proj_point[1])
-                
+
                 # Draw smoothed keypoint (cyan circle)
                 cv2.circle(canvas, (proj_x, proj_y), 8, (255, 255, 0), -1)  # Cyan filled
                 cv2.circle(canvas, (proj_x, proj_y), 8, (255, 255, 255), 2)  # White border
-                
+
                 # Draw keypoint label
                 label_y = proj_y - 12
                 cv2.putText(canvas, keypoint_name[:5], (proj_x - 15, label_y),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        
+
         return canvas
 
     def _render_game_over(self, canvas: np.ndarray) -> np.ndarray:
